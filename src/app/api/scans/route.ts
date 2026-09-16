@@ -8,6 +8,7 @@ import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
 import { scanRecords } from '@/lib/scan-records';
 import { recordScan } from '@/lib/record-scan';
+import { assertScanEvidence } from '@/lib/scan-evidence-policy';
 
 const schema = z.object({
   barcode: z.string().trim().min(3).max(100),
@@ -45,9 +46,7 @@ export async function POST(request: NextRequest) {
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) return fail('Invalid scan', 400, parsed.error.flatten());
     const data = parsed.data;
-    if (data.captureMethod === 'MANUAL' && !data.evidenceImageUrl) {
-      return fail('A timestamped barcode photo is required for manual entry', 400);
-    }
+    assertScanEvidence(data);
 
     const transactionId = data.clientTransactionId ?? randomUUID();
     const sql = db();
@@ -56,6 +55,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const auth = authFailure(error);
     if (auth) return fail(auth.message, auth.status);
+    if (error instanceof Error && error.message === 'MANUAL_PHOTO_REQUIRED') return fail('Take a new photo showing the material and its barcode before submitting manual entry', 400);
     if (error instanceof Error && error.message === 'TRANSACTION_CONFLICT') return fail('Scan request identifier is already in use', 409);
     if (error instanceof Error && error.message === 'INVALID_VALIDATION') return fail('Scan validation expired or does not match', 409);
     if (error instanceof Error && error.message === 'ITEM_NOT_FOUND') return fail('Item not found', 404);

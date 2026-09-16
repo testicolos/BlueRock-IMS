@@ -1,4 +1,5 @@
 import type { TransactionSql } from 'postgres';
+import { assertScanEvidence } from './scan-evidence-policy';
 
 export type RecordScanInput = {
   barcode: string;
@@ -25,6 +26,7 @@ export async function recordScan(
   transactionId: string,
   testClock?: () => Promise<Date>,
 ) {
+  assertScanEvidence(data);
   const barcode = data.barcode.toUpperCase();
   await tx`select pg_advisory_xact_lock(hashtextextended(${transactionId},0))`;
   const existing = (await tx`select id,scanner_user_id,barcode from ims_scans where client_transaction_id=${transactionId} limit 1`)[0];

@@ -5,11 +5,12 @@ import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser'
 import {
   AlertTriangle, Archive, Barcode, Boxes, Camera, CheckCircle2, ChevronDown, ChevronRight, CircleGauge,
   Download, Edit3, History, ImagePlus, Keyboard, LocateFixed, LogOut, MapPin, Menu, PackageCheck,
-  Plus, Printer, ScanLine, Search, ShieldCheck, Smartphone, Trash2, UsersRound, X,
+  Plus, Printer, RefreshCw, ScanLine, Search, ShieldCheck, Smartphone, Trash2, UsersRound, X,
 } from 'lucide-react';
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import ScanEvidence from './scan-evidence';
 import ScanChecklist from './scan-checklist';
+import UnitPhotoCamera from './unit-photo-camera';
 import { resolveView, viewUrl, type View } from '@/lib/view-navigation';
 
 type User={id:string;username:string;fullName?:string;full_name?:string;role:'ADMIN'|'SCANNER';active?:boolean;last_login_at?:string};
@@ -216,6 +217,10 @@ function IssueForm({row,units,api,close,done}:{row:Issue|null;units:Unit[];api:A
 function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){
   const videoRef=useRef<HTMLVideoElement>(null);
   const controlsRef=useRef<IScannerControls|null>(null);
+  const streamRef=useRef<MediaStream|null>(null);
+  const cameraSessionRef=useRef(0);
+  const scanRevisionRef=useRef(0);
+  const validationAbortRef=useRef<AbortController|null>(null);
   const busyRef=useRef(false);
   const transactionRef=useRef<string|null>(null);
   const[form,setForm]=useState({locationId:locations[0]?.id||'',condition:'GOOD',notes:'',reportIssue:false,issueType:'Damaged equipment'});
@@ -228,72 +233,106 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
   const[evidence,setEvidence]=useState('');
   const[failures,setFailures]=useState(0);
   const[scanning,setScanning]=useState(false);
+  const[cameraOpening,setCameraOpening]=useState(false);
   const[busy,setBusy]=useState(false);
+  const[submitting,setSubmitting]=useState(false);
   const[error,setError]=useState('');
-  const manualAllowed=failures>=2;
 
   useEffect(()=>{if(!form.locationId&&locations[0])setForm(current=>({...current,locationId:locations[0].id}))},[locations,form.locationId]);
-  useEffect(()=>()=>controlsRef.current?.stop(),[]);
+  useEffect(()=>()=>{cameraSessionRef.current++;scanRevisionRef.current++;validationAbortRef.current?.abort();controlsRef.current?.stop();streamRef.current?.getTracks().forEach(track=>track.stop())},[]);
 
-  function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;setScanning(false);busyRef.current=false}
-  function resetScan(){stopCamera();transactionRef.current=null;setBarcode('');setManualBarcode('');setMatch(null);setAttemptId('');setMethod('CAMERA');setGeo(null);setEvidence('');setError('')}
+  function stopCamera(){cameraSessionRef.current++;controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false);setCameraOpening(false)}
+  function clearMatch(){scanRevisionRef.current++;validationAbortRef.current?.abort();transactionRef.current=null;setMatch(null);setAttemptId('');setGeo(null);setEvidence('')}
+  function resetScan(){stopCamera();clearMatch();setBarcode('');setManualBarcode('');setMethod('CAMERA');setError('')}
+  function editManualBarcode(value:string){stopCamera();clearMatch();setMethod('MANUAL');setBarcode('');setManualBarcode(value.toUpperCase());setError('')}
+  function refreshScanner(){
+    if(submitting)return;
+    if((manualBarcode||match||evidence||form.notes||form.reportIssue)&&!window.confirm('Refresh Scan Unit? Unsaved barcode details, photos and notes will be cleared. Submitted scans are not affected.'))return;
+    stopCamera();validationAbortRef.current?.abort();window.location.reload();
+  }
 
   async function validateBarcode(value:string,captureMethod:'CAMERA'|'MANUAL'){
+    if(busyRef.current)return;
+    stopCamera();clearMatch();setMethod(captureMethod);
     const normalized=value.trim().toUpperCase();
+    setBarcode(normalized);
+    if(captureMethod==='CAMERA')setManualBarcode('');
     if(normalized.length<3){setError('Enter a valid barcode');return}
-    setBusy(true);setError('');
+    const revision=scanRevisionRef.current;
+    const controller=new AbortController();validationAbortRef.current=controller;
+    const timeout=window.setTimeout(()=>controller.abort(),30_000);
+    busyRef.current=true;setBusy(true);setError('');
     try{
       const position=await currentPosition();
+      if(controller.signal.aborted)throw new Error('Barcode matching timed out. Please try again.');
       const stamp=geoFromPosition(position);
-      const result=await api<ValidationResult>('/api/scans/validate',{method:'POST',body:JSON.stringify({barcode:normalized,captureMethod,...stamp})});
-      setBarcode(normalized);setGeo(stamp);setMethod(captureMethod);setAttemptId(result.attemptId);
+      const result=await api<ValidationResult>('/api/scans/validate',{method:'POST',signal:controller.signal,body:JSON.stringify({barcode:normalized,captureMethod,...stamp})});
+      if(revision!==scanRevisionRef.current)return;
+      setGeo(stamp);setAttemptId(result.attemptId);
       if(!result.matched||!result.item){
         const next=failures+1;setFailures(next);setMatch(null);setAttemptId('');
-        setError(next>=2?'Barcode not found. Manual entry is now available and requires a barcode photo.':'Barcode not found. Try scanning once more.');
+        setError('Barcode not found in inventory. Check the label and scan or enter it again.');
         return;
       }
       transactionRef.current=crypto.randomUUID();setMatch(result.item);setError('');
-    }catch(reason){setError(locationError(reason))}finally{setBusy(false)}
+    }catch(reason){if(revision===scanRevisionRef.current)setError(controller.signal.aborted?'Barcode matching timed out. Please try again.':locationError(reason))}finally{window.clearTimeout(timeout);if(validationAbortRef.current===controller)validationAbortRef.current=null;if(revision===scanRevisionRef.current){busyRef.current=false;setBusy(false)}}
   }
 
   async function startCamera(){
-    if(!videoRef.current)return;
-    setError('');setMatch(null);setAttemptId('');setEvidence('');
+    if(!videoRef.current||busyRef.current)return;
+    stopCamera();clearMatch();setMethod('CAMERA');setBarcode('');setManualBarcode('');setError('');setCameraOpening(true);
+    const session=cameraSessionRef.current;
+    const timeout=window.setTimeout(()=>{if(session===cameraSessionRef.current){stopCamera();setError('Camera opening timed out. Try again or use Refresh page.')}},30_000);
     try{
-      await currentPosition();
+      await currentPosition().catch(reason=>{throw new Error(locationError(reason))});
+      if(session!==cameraSessionRef.current)return;
+      if(!navigator.mediaDevices?.getUserMedia)throw new Error('Camera access is unavailable. Open this app over HTTPS in a supported browser.');
+      const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+      if(session!==cameraSessionRef.current){stream.getTracks().forEach(track=>track.stop());return}
+      streamRef.current=stream;
       const reader=new BrowserMultiFormatReader();
       setScanning(true);
-      controlsRef.current=await reader.decodeFromConstraints(
-        {audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}},
+      const controls=await reader.decodeFromStream(
+        stream,
         videoRef.current,
         (result,_error,controls)=>{
+          if(session!==cameraSessionRef.current){controls.stop();return}
           if(!result||busyRef.current)return;
-          busyRef.current=true;
           const value=result.getText();
-          controls.stop();controlsRef.current=null;setScanning(false);busyRef.current=false;
+          controls.stop();stopCamera();
           void validateBarcode(value,'CAMERA');
         },
       );
-    }catch(reason){stopCamera();setError(cameraError(reason))}
+      if(session!==cameraSessionRef.current){controls.stop();return}
+      controlsRef.current=controls;setCameraOpening(false);
+    }catch(reason){if(session===cameraSessionRef.current){stopCamera();setError(cameraError(reason))}}finally{window.clearTimeout(timeout)}
   }
 
-  async function photo(event:React.ChangeEvent<HTMLInputElement>){
-    const selected=event.target.files?.[0];
-    if(!selected)return;
-    if(selected.size>8_000_000){setError('Photo must be smaller than 8 MB before processing');return}
-    setBusy(true);setError('');
+  async function capturePhoto(selected:File){
+    if(busyRef.current||!match||!attemptId)throw new Error('Match a barcode before taking its photo.');
+    if(selected.size>8_000_000)throw new Error('Photo must be smaller than 8 MB before processing');
+    const revision=scanRevisionRef.current;
+    const capturedAt=method==='MANUAL'?new Date(selected.lastModified).toISOString():new Date().toISOString();
+    busyRef.current=true;setBusy(true);setError('');setEvidence('');
     try{
-      const stamp=geoFromPosition(await currentPosition());
-      setGeo(stamp);
-      setEvidence(await stampedImage(selected,stamp,barcode||manualBarcode));
-    }catch(reason){setError(locationError(reason))}finally{setBusy(false)}
+      const stamp={...geoFromPosition(await currentPosition()),capturedAt};
+      const image=await stampedImage(selected,stamp,match.barcode);
+      if(revision!==scanRevisionRef.current)throw new Error('Barcode changed. Please take a new photo.');
+      setGeo(stamp);setEvidence(image);
+    }catch(reason){const message=locationError(reason);if(revision===scanRevisionRef.current)setError(message);throw new Error(message)}finally{if(revision===scanRevisionRef.current){busyRef.current=false;setBusy(false)}}
+  }
+  async function photo(event:React.ChangeEvent<HTMLInputElement>){
+    const selected=event.target.files?.[0];event.target.value='';
+    if(!selected)return;
+    try{await capturePhoto(selected)}catch(reason){setError(reason instanceof Error?reason.message:'Could not attach photo')}
   }
 
   async function submit(event:FormEvent){
     event.preventDefault();
+    if(busyRef.current)return;
     if(!match||!attemptId||!geo){setError('Scan and match a barcode before submitting');return}
     if(method==='MANUAL'&&!evidence){setError('Take a clear photo showing the barcode before submitting manual entry');return}
-    setBusy(true);setError('');
+    busyRef.current=true;setBusy(true);setSubmitting(true);setError('');
     try{
       const result=await api<{replaced?:boolean;duplicate?:boolean}>('/api/scans',{method:'POST',body:JSON.stringify({
         barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
@@ -303,28 +342,28 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
       notify(result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`);
       resetScan();setFailures(0);setForm(current=>({...current,notes:'',reportIssue:false}));
       await refresh();
-    }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{setBusy(false)}
+    }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{busyRef.current=false;setBusy(false);setSubmitting(false)}
   }
 
   return <section className="scannerPage">
-    <div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Camera scans are checked against the inventory database before movement is recorded.</p></div><div className={`gpsBadge ${geo?'ready':''}`}><LocateFixed size={18}/><span>{geo?`${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)}`:'GPS captured with every scan'}</span></div></div>
+    <div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scan with the camera or enter a barcode manually. Every barcode is checked against inventory.</p></div><div className="scannerHeroActions"><button type="button" className="secondary scannerRefresh" onClick={refreshScanner} disabled={submitting}><RefreshCw size={18}/> Refresh page</button><div className={`gpsBadge ${geo?'ready':''}`}><LocateFixed size={18}/><span>{geo?`${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)}`:'GPS captured with every scan'}</span></div></div></div>
     <div className="scannerGrid">
       <section className="cameraCard">
         <div className="cameraViewport"><video ref={videoRef} muted playsInline/><div className="scanReticle"><span/><span/><span/><span/></div>{!scanning&&<div className="cameraEmpty"><Camera size={42}/><strong>Ready to scan</strong><small>Use the rear camera and center the barcode.</small></div>}</div>
-        <div className="cameraActions">{scanning?<button type="button" className="secondary" onClick={stopCamera}><X size={18}/> Stop camera</button>:<button type="button" className="primary" onClick={()=>void startCamera()} disabled={busy}><Camera size={18}/> Open barcode camera</button>}<small>Camera and location permission are required.</small></div>
+        <div className="cameraActions">{scanning||cameraOpening?<button type="button" className="secondary" onClick={stopCamera}><X size={18}/> {cameraOpening?'Cancel opening camera':'Stop camera'}</button>:<button type="button" className="primary" onClick={()=>void startCamera()} disabled={busy}><Camera size={18}/> Open barcode camera</button>}<small>Camera stuck? Use Refresh page above.<br/>Camera and location permission are required.</small></div>
         <div className="attemptMeter"><span>Failed matches</span><div><i className={failures>=1?'active':''}/><i className={failures>=2?'active':''}/></div></div>
-        {manualAllowed&&<div className="manualEntry"><div><Keyboard size={20}/><div><strong>Enter barcode manually</strong><small>After two failed scans, photographic proof is required.</small></div></div><div className="manualRow"><input aria-label="Manual barcode" placeholder="TL-CSW-0001" value={manualBarcode} onChange={event=>setManualBarcode(event.target.value.toUpperCase())}/><button type="button" onClick={()=>void validateBarcode(manualBarcode,'MANUAL')} disabled={busy}>Match barcode</button></div></div>}
+        <div className="manualEntry"><div><Keyboard size={20}/><div><strong>Enter barcode manually</strong><small>Match the barcode, then take a fresh photo showing the material and its barcode label. A photo is mandatory for manual entry.</small></div></div><div className="manualRow"><input aria-label="Manual barcode" placeholder="TL-CSW-0001" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={100} disabled={busy} value={manualBarcode} onChange={event=>editManualBarcode(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void validateBarcode(manualBarcode,'MANUAL')}}}/><button type="button" onClick={()=>void validateBarcode(manualBarcode,'MANUAL')} disabled={busy||manualBarcode.trim().length<3}>Match barcode</button></div></div>
       </section>
       <form className="scanForm scannerForm" onSubmit={submit}>
-        <div className={`matchCard ${match?'matched':''}`}>{match?<><img src={match.imageUrl||'/materials/scaffolding.jpg'} alt=""/><div><span><CheckCircle2 size={15}/> Database match</span><h3>{match.name}</h3><code>{match.barcode}</code><small>{match.locationName||'Unassigned'} · {pretty(match.condition)}</small></div></>:<><Barcode size={28}/><div><strong>No barcode matched yet</strong><small>Open the camera and scan a registered unit.</small></div></>}</div>
+        <div className={`matchCard ${match?'matched':''}`}>{match?<><img src={match.imageUrl||'/materials/scaffolding.jpg'} alt=""/><div><span><CheckCircle2 size={15}/> Database match · {method==='MANUAL'?'Manual entry':'Camera scan'}</span><h3>{match.name}</h3><code>{match.barcode}</code><small>{match.locationName||'Unassigned'} · {pretty(match.condition)}</small></div></>:<><Barcode size={28}/><div><strong>No barcode matched yet</strong><small>Scan a registered unit or enter its barcode manually.</small></div></>}</div>
         <label>New location<select required value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}><option value="" disabled>Select location</option>{locations.map(location=><option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
         <label>Condition<select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label>
         <label>Notes<textarea placeholder="Optional movement or condition notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
         <label className="check"><input type="checkbox" checked={form.reportIssue} onChange={e=>setForm({...form,reportIssue:e.target.checked})}/> Report this unit as defective</label>
         {form.reportIssue&&<label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label>}
-        <label className={`upload scanEvidence ${method==='MANUAL'?'required':''}`}><ImagePlus/><span>{evidence?'Replace unit photo':method==='MANUAL'?'Take required barcode photo':'Attach unit photo (optional)'}<small>Photo is stamped with capture time and GPS coordinates.</small></span><input type="file" accept="image/*" capture="environment" onChange={photo}/></label>
+        {method==='MANUAL'?<div className="manualPhotoRequirement"><strong>{evidence?'Required barcode photo attached':'Barcode photo required before submission'}</strong><UnitPhotoCamera key={attemptId||'unmatched'} disabled={busy||!match} onCapture={capturePhoto}/></div>:<label className="upload scanEvidence"><ImagePlus/><span>{evidence?'Replace unit photo':'Attach unit photo (optional)'}<small>Match a barcode first. Photo is stamped with capture time and GPS coordinates.</small></span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={photo}/></label>}
         {evidence&&<img className="uploadPreview" src={evidence} alt="Timestamped unit evidence"/>}
-        {error&&<div className="error scanError">{error}</div>}
+        {error&&<div className="error scanError" role="alert">{error}</div>}
         <button className="primary submitScan" disabled={busy||!match||!form.locationId||(method==='MANUAL'&&!evidence)}><ScanLine size={19}/>{busy?'Working…':'Submit matched scan'}</button>
       </form>
     </div>

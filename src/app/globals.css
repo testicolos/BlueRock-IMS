@@ -62,6 +62,15 @@ input,select,textarea{font-size:16px;line-height:1.4;min-width:0;max-width:100%;
 .allocationGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
 .generateFields{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr)}
 .manualRow{grid-template-columns:minmax(0,1fr) auto}
+.manualRow input,.manualRow button{min-height:44px;font-size:16px}
+.manualEntry small{font-size:12px;line-height:1.5}
+.manualRow button:disabled{opacity:.5;cursor:not-allowed}
+.scannerHeroActions{display:flex;flex-direction:column;align-items:flex-end;gap:10px;min-width:0}
+.scannerRefresh{min-height:44px;font-size:16px;white-space:normal}
+.manualPhotoRequirement{padding:14px;border:1px solid #edba98;border-radius:11px;background:#fff0e3}
+.manualPhotoRequirement>strong{font-size:14px;color:#99421e}
+.manualPhotoRequirement>section{margin-top:10px}
+@media(max-width:560px){.scannerHeroActions{width:100%;align-items:stretch}.scannerHeroActions .gpsBadge{justify-content:center}.scannerRefresh{justify-content:center}.manualEntry{margin-inline:14px}.manualEntry>div:first-child{align-items:flex-start}.manualEntry>div:first-child>svg{flex:none}}
 .formActions{flex-wrap:wrap}
 .formActions>button{min-height:44px}
 .tableScroll,.unitTable{max-width:100%;overscroll-behavior-x:contain}

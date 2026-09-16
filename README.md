@@ -40,6 +40,14 @@ Both use one barcode/location movement engine and immutable scan history.
 
 The Android app will use the login, locations, inventory lookup and scans endpoints.
 
+## Manual barcode entry and camera recovery
+
+Scan Unit always exposes manual barcode entry, without requiring failed camera scans first. A typed barcode must match the backend inventory before submission. Manual entry then requires a fresh live-camera photo showing the material and barcode; there is no gallery/file chooser for manual proof. The app stamps the shutter time and captured GPS coordinates on the photo. Editing or rematching a barcode clears its previous validation and evidence. Camera-decoded scans keep optional photo attachment.
+
+The backend rejects manual scans without inline JPEG/PNG/WebP image evidence and binds the submission's capture method to the validated attempt. It validates image format/presence; browser requests cannot cryptographically prove live-camera provenance. Camera sessions release hardware on cancellation and unmount, and late permission responses are discarded. The required-photo camera also pauses when the app is backgrounded and detects stalled previews.
+
+The **Refresh page** button reloads the same Scan Unit page, including in the installed mobile web app. It warns before discarding unsaved barcode details, photos, or notes, and is disabled while a scan is being submitted. Submitted records are not removed. Camera startup timeouts allow retrying if permissions or a preview stall.
+
 ## Rolling scan records and checklists
 
 Each barcode's first accepted scan starts a fixed 24-hour window, using server time. Further scans in that window replace the entry shown in Scan History and the current checklist without moving the deadline. At the exact deadline the item becomes Not scanned; its next accepted scan starts a new window. Different barcodes reset independently, including across midnight.
