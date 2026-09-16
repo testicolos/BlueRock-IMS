@@ -71,7 +71,11 @@ async function testMigration(url: string) {
   const local = ['localhost', '127.0.0.1', '::1'].includes(new URL(url).hostname);
   const options = { ssl: local ? false as const : 'require' as const, prepare: false, onnotice: () => {} };
   const control = postgres(url, { ...options, max: 1 });
-  const sql = postgres(url, { ...options, max: 1, connection: { search_path: schemaName } });
+  const statements: string[] = [];
+  const sql = postgres(url, { ...options, max: 1, connection: { search_path: schemaName }, debug: (_connection, statement) => { statements.push(statement); } });
+  const blocker = postgres(url, { ...options, max: 1, connection: { search_path: schemaName } });
+  const freshSchemaName = `ims_sample_fresh_test_${randomUUID().replaceAll('-', '')}`;
+  const fresh = postgres(url, { ...options, max: 1, connection: { search_path: freshSchemaName } });
   try {
     await control`create schema ${control(schemaName)}`;
     assert.equal((await sql`select current_schema() as name`)[0].name, schemaName);
@@ -103,8 +107,60 @@ async function testMigration(url: string) {
     assert.equal((await sql`select count(*)::int as count from ims_schema_migrations where version='2026-09-17-sample-assignments-v1'`)[0].count, 1);
     assert.equal((await sql`select relrowsecurity from pg_class where oid='ims_materials'::regclass`)[0].relrowsecurity, true);
     console.log('PASS: migration upgrades an already-migrated database exactly once, preserves legacy sample history/locations and enforces material RLS');
+
+    await blocker.begin(async tx => {
+      // Read locks conflict with ALTER TABLE's exclusive lock, but not the new
+      // fast-path SELECT. A held advisory lock must not affect applied schemas.
+      await tx`lock table ims_schema_migrations in access share mode`;
+      await tx`select pg_advisory_xact_lock(78243190)`;
+      const start = Date.now();
+      const startIndex = statements.length;
+      await migrateInventorySchema(sql);
+      assert.ok(Date.now() - start < 3000, 'An applied schema should not wait for migration locks');
+      const fastPath = statements.slice(startIndex).map(statement => statement.trim().toLowerCase());
+      assert.ok(fastPath.length >= 2);
+      assert.ok(fastPath.every(statement => /^(select|set local|begin read only|commit)/.test(statement)), 'Applied fast path must use a bounded read-only transaction without DDL');
+    });
+    console.log('PASS: applied-schema fast path is read-only and bypasses both exclusive metadata DDL and migration advisory locks');
+
+    await blocker.begin(async tx => {
+      await tx`lock table ims_schema_migrations in access exclusive mode`;
+      const start = Date.now();
+      await assert.rejects(migrateInventorySchema(sql), (error: unknown) => error instanceof postgres.PostgresError && error.code === '55P03');
+      assert.ok(Date.now() - start < 10_000, 'Even the marker read must fail after its 5-second lock timeout');
+    });
+    console.log('PASS: read-only preflight also times out safely behind an exclusive registry lock');
+
+    await sql`delete from ims_schema_migrations where version='2026-09-17-sample-assignments-v1'`;
+    await blocker.begin(async tx => {
+      await tx`lock table ims_materials in access share mode`;
+      const start = Date.now();
+      await assert.rejects(migrateInventorySchema(sql), (error: unknown) => error instanceof postgres.PostgresError && error.code === '55P03');
+      assert.ok(Date.now() - start < 10_000, 'Contended migration should fail after its 5-second lock timeout');
+    });
+    assert.equal((await sql`select count(*)::int as count from ims_schema_migrations where version='2026-09-17-sample-assignments-v1'`)[0].count, 0);
+    assert.equal((await sql`show lock_timeout`)[0].lock_timeout, '0');
+    assert.equal((await sql`show statement_timeout`)[0].statement_timeout, '0');
+    assert.equal((await sql`show idle_in_transaction_session_timeout`)[0].idle_in_transaction_session_timeout, '0');
+    await migrateInventorySchema(sql);
+    assert.equal((await sql`select count(*)::int as count from ims_schema_migrations`)[0].count, 2);
+    assert.deepEqual((await sql`select * from ims_scans where id=${scan.id}`)[0], before);
+    console.log('PASS: contended DDL rolls back within the lock timeout, leaves no session settings, and safely retries after release');
+
+    await control`create schema ${control(freshSchemaName)}`;
+    await fresh.unsafe(oldSchema);
+    assert.equal((await fresh`select current_schema() as name`)[0].name, freshSchemaName);
+    assert.equal((await fresh`select to_regclass('ims_schema_migrations') as registry`)[0].registry, null);
+    await migrateInventorySchema(fresh);
+    assert.equal((await fresh`select count(*)::int as count from ims_schema_migrations`)[0].count, 2);
+    assert.equal((await fresh`select count(*)::int as count from information_schema.columns where table_schema=${freshSchemaName} and table_name='ims_materials' and column_name in ('customer_name','employee_name')`)[0].count, 2);
+    assert.equal((await fresh`select relrowsecurity from pg_class where oid='ims_schema_migrations'::regclass`)[0].relrowsecurity, true);
+    console.log('PASS: missing-registry fresh schema migrates both versions using its own search_path, without relying on public');
   } finally {
+    await blocker.end();
+    await fresh.end();
     await sql.end();
+    await control`drop schema if exists ${control(freshSchemaName)} cascade`;
     await control`drop schema if exists ${control(schemaName)} cascade`;
     await control.end();
   }

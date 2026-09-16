@@ -1,21 +1,59 @@
 import { db } from '@/lib/db';
 import { scanWindowMigration } from '@/lib/scan-windows';
+import type { Sql, TransactionSql } from 'postgres';
 
 let ready: Promise<void> | null = null;
+const rollingVersion = '2026-09-17-rolling-scans-v1';
+const sampleVersion = '2026-09-17-sample-assignments-v1';
 
 export function ensureInventorySchema() {
   if (!ready) ready = migrateInventorySchema(db()).catch((error) => { ready = null; throw error; });
   return ready;
 }
 
+async function migrationsApplied(database: Sql | TransactionSql) {
+  // Most cold starts only need to read the migration markers. Do not acquire
+  // an exclusive metadata-table lock (ALTER/REVOKE) after migration is complete.
+  // Resolve the registry through this connection's search_path, never a hard-
+  // coded public schema: isolated test schemas and custom installs must work.
+  const [registry] = await database`select to_regclass('ims_schema_migrations') is not null as exists`;
+  if (registry.exists) {
+    const applied = await database`select version from ims_schema_migrations
+      where version in (${rollingVersion},${sampleVersion})`;
+    if (applied.length === 2) return true;
+  }
+  return false;
+}
+
+async function boundMigrationTransaction(sql: TransactionSql) {
+  // These settings last only this transaction, including pooled connections.
+  await sql`set local lock_timeout = '5s'`;
+  await sql`set local statement_timeout = '45s'`;
+  await sql`set local idle_in_transaction_session_timeout = '60s'`;
+}
+
 export async function migrateInventorySchema(database: ReturnType<typeof db>) {
+  // Bound even the marker SELECT: it can wait behind an older DDL transaction.
+  // End this read transaction before waiting for the migration advisory lock,
+  // so its metadata read locks cannot deadlock another instance's DDL.
+  const applied = await database.begin('read only', async sql => {
+    await boundMigrationTransaction(sql);
+    return migrationsApplied(sql);
+  });
+  if (applied) return;
+
   await database.begin(async (sql) => {
+  // A busy table or abandoned serverless transaction must not stall every
+  // inventory request indefinitely.
+  await boundMigrationTransaction(sql);
   // Serialize cold-start migrations across serverless instances.
   await sql`select pg_advisory_xact_lock(78243190)`;
+  // Another cold instance may have completed the migration while we waited.
+  if (await migrationsApplied(sql)) return;
   await sql`create table if not exists ims_schema_migrations (version text primary key,applied_at timestamptz not null default now())`;
   await sql`alter table ims_schema_migrations enable row level security`;
   await sql`revoke all on ims_schema_migrations from public`;
-  const version = '2026-09-17-rolling-scans-v1';
+  const version = rollingVersion;
   if (!(await sql`select version from ims_schema_migrations where version=${version}`).length) {
   await sql`create table if not exists ims_materials (
     id uuid primary key default gen_random_uuid(),
@@ -62,7 +100,6 @@ export async function migrateInventorySchema(database: ReturnType<typeof db>) {
 
   // Keep each migration independent: existing installations already have the
   // rolling-scan version, but must still receive new sample assignment columns.
-  const sampleVersion = '2026-09-17-sample-assignments-v1';
   if (!(await sql`select version from ims_schema_migrations where version=${sampleVersion}`).length) {
     await sql`alter table ims_materials add column if not exists customer_name varchar(160)`;
     await sql`alter table ims_materials add column if not exists employee_name varchar(160)`;
