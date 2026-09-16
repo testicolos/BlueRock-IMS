@@ -4,6 +4,7 @@ import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
+import { scanRecords } from '@/lib/scan-records';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,17 +48,7 @@ export async function GET(request: NextRequest) {
       from ims_users
       order by full_name
     `;
-    const scans = await sql`
-      select s.*,i.barcode,i.name,i.inventory_type,
-        pl.name as previous_location_name,nl.name as new_location_name,u.full_name as scanner_name
-      from ims_scans s
-      join ims_inventory_items i on i.id=s.inventory_item_id
-      left join ims_locations pl on pl.id=s.previous_location_id
-      left join ims_locations nl on nl.id=s.new_location_id
-      left join ims_users u on u.id=s.scanner_user_id
-      order by s.scanned_at desc
-      limit 500
-    `;
+    const scans = await scanRecords();
     const issues = await sql`
       select x.*,i.barcode,i.name,i.inventory_type,m.image_url as material_image_url,
         l.name as location_name,u.full_name as reported_by_name

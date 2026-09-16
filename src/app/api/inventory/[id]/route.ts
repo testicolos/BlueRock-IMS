@@ -5,6 +5,30 @@ import { db } from '@/lib/db';
 import { fail,ok,serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
 const schema=z.object({barcode:z.string().min(3).max(100).optional(),name:z.string().min(2).max(160).optional(),description:z.string().max(1000).nullable().optional(),manufacturer:z.string().max(120).nullable().optional(),model:z.string().max(120).nullable().optional(),serialNumber:z.string().max(120).nullable().optional(),locationId:z.string().uuid().nullable().optional(),status:z.enum(['ACTIVE','INACTIVE','MAINTENANCE','LOST','RETIRED']).optional(),condition:z.enum(['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE']).optional()});
-export async function GET(request:NextRequest,{params}:{params:Promise<{id:string}>}){try{await requireAuth(request,['ADMIN']);const {id}=await params;const sql=db();const item=(await sql`select i.*,l.name as location_name from ims_inventory_items i left join ims_locations l on l.id=i.current_location_id where i.id=${id} limit 1`)[0];if(!item)return fail('Item not found',404);const history=await sql`select s.*,pl.name as previous_location_name,nl.name as new_location_name,u.full_name as scanner_name from ims_scans s left join ims_locations pl on pl.id=s.previous_location_id left join ims_locations nl on nl.id=s.new_location_id left join ims_users u on u.id=s.scanner_user_id where s.inventory_item_id=${id} order by s.scanned_at desc limit 100`;return ok({item,history})}catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}}
+export async function GET(request:NextRequest,{params}:{params:Promise<{id:string}>}){
+  try{
+    await requireAuth(request,['ADMIN']);
+    await ensureInventorySchema();
+    const {id}=await params;
+    const sql=db();
+    const item=(await sql`select i.*,l.name as location_name from ims_inventory_items i left join ims_locations l on l.id=i.current_location_id where i.id=${id} limit 1`)[0];
+    if(!item)return fail('Item not found',404);
+    const history=await sql`
+      select s.id,s.inventory_item_id,s.barcode,s.previous_location_id,s.new_location_id,
+        s.scanner_user_id,s.condition,s.notes,s.client_transaction_id,s.scanned_at,s.created_at,
+        s.validation_attempt_id,s.capture_method,s.latitude,s.longitude,s.location_accuracy,s.captured_at,
+        (nullif(s.evidence_image_url,'') is not null) as has_evidence,
+        case when nullif(s.evidence_image_url,'') is not null then 1 else 0 end as photo_count,
+        pl.name as previous_location_name,nl.name as new_location_name,u.full_name as scanner_name
+      from ims_scans s
+      left join ims_locations pl on pl.id=s.previous_location_id
+      left join ims_locations nl on nl.id=s.new_location_id
+      left join ims_users u on u.id=s.scanner_user_id
+      where s.inventory_item_id=${id}
+      order by s.scanned_at desc limit 100
+    `;
+    return ok({item,history});
+  }catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}
+}
 export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:string}>}){try{await requireAuth(request,['ADMIN']);await ensureInventorySchema();const {id}=await params;const p=schema.safeParse(await request.json());if(!p.success)return fail('Invalid item update',400,p.error.flatten());const sql=db();const current=(await sql`select * from ims_inventory_items where id=${id} limit 1`)[0];if(!current)return fail('Item not found',404);const d=p.data;const rows=await sql`update ims_inventory_items set barcode=${d.barcode??current.barcode},name=${d.name??current.name},description=${d.description===undefined?current.description:d.description},manufacturer=${d.manufacturer===undefined?current.manufacturer:d.manufacturer},model=${d.model===undefined?current.model:d.model},serial_number=${d.serialNumber===undefined?current.serial_number:d.serialNumber},current_location_id=${d.locationId===undefined?current.current_location_id:d.locationId},status=${d.status??current.status},condition=${d.condition??current.condition},updated_at=now() where id=${id} returning *`;return ok(rows[0])}catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}}
 export async function DELETE(request:NextRequest,{params}:{params:Promise<{id:string}>}){try{await requireAuth(request,['ADMIN']);const {id}=await params;const rows=await db()`update ims_inventory_items set archived=true,status='RETIRED',updated_at=now() where id=${id} returning id,barcode,name,status,archived`;if(!rows[0])return fail('Item not found',404);return ok(rows[0])}catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}}

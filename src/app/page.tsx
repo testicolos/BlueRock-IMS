@@ -8,24 +8,26 @@ import {
   Plus, Printer, ScanLine, Search, ShieldCheck, Smartphone, Trash2, UsersRound, X,
 } from 'lucide-react';
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import ScanEvidence from './scan-evidence';
+import ScanChecklist from './scan-checklist';
 
 type User={id:string;username:string;fullName?:string;full_name?:string;role:'ADMIN'|'SCANNER';active?:boolean;last_login_at?:string};
 type Location={id:string;name:string;code:string;location_type?:string;address?:string;description?:string;active:boolean};
 type Unit={id:string;barcode:string;unit_number:number;name:string;condition:string;status:string;serial_number?:string;location_id?:string;location_name?:string;last_scanned_at?:string};
 type Material={id:string;inventory_type:'TOOL'|'SAMPLE';name:string;code:string;image_url?:string;image_source_url?:string;description?:string;units:Unit[]};
-type Scan={id:string;barcode:string;name:string;inventory_type:string;previous_location_name?:string;new_location_name?:string;scanner_name?:string;condition:string;scanned_at:string;capture_method?:'CAMERA'|'MANUAL';latitude?:number;longitude?:number;location_accuracy?:number;evidence_image_url?:string};
+type Scan={id:string;barcode:string;name:string;inventory_type:string;previous_location_name?:string;new_location_name?:string;scanner_name?:string;condition:string;scanned_at:string;capture_method?:'CAMERA'|'MANUAL';latitude?:number;longitude?:number;location_accuracy?:number;photo_count:number;scan_count:number;window_started_at:string;window_expires_at:string};
 type Issue={id:string;inventory_item_id:string;barcode:string;name:string;inventory_type:string;issue_type:string;description:string;image_url?:string;material_image_url?:string;status:string;location_name?:string;reported_by_name?:string;reported_at:string;resolution_note?:string};
 type GeoStamp={latitude:number;longitude:number;locationAccuracy?:number;capturedAt:string};
 type ScanMatch={id:string;barcode:string;name:string;inventoryType:string;condition:string;status:string;locationName?:string;imageUrl?:string};
 type ValidationResult={matched:boolean;attemptId:string;item:ScanMatch|null};
 type ApiResult<T>={success:boolean;data:T;error?:{message:string}};
 type Api=<T>(url:string,options?:RequestInit)=>Promise<T>;
-type View='dashboard'|'materials'|'locations'|'scanner'|'issues'|'users'|'scans';
+type View='dashboard'|'materials'|'locations'|'scanner'|'issues'|'users'|'scans'|'checklist';
 type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[]};
 
 const adminNav:[View,string,typeof CircleGauge][]=[
   ['dashboard','Overview',CircleGauge],['materials','Materials & Units',Boxes],['locations','Locations',MapPin],
-  ['scanner','Scan Unit',ScanLine],['issues','Defects',AlertTriangle],['users','Users',UsersRound],['scans','Scan History',History],
+  ['scanner','Scan Unit',ScanLine],['checklist','Scan Checklist',PackageCheck],['issues','Defects',AlertTriangle],['users','Users',UsersRound],['scans','Scan History',History],
 ];
 const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE'];
 const statuses=['ACTIVE','INACTIVE','MAINTENANCE','LOST','RETIRED'];
@@ -68,13 +70,14 @@ export default function Home(){
       <header className="topbar"><button type="button" className="mobileMenu" aria-label="Open navigation" aria-expanded={mobileNav} aria-controls="main-navigation" onClick={()=>setMobileNav(true)}><Menu/></button><div><span className="eyebrow">BLUE ROCK / INVENTORY</span><h1>{nav.find(item=>item[0]===view)?.[1]||'Inventory'}</h1></div><div className="topbarActions"><InstallApp/><div className="systemPill"><span/>System online</div></div></header>
       {message&&<button className="notice" onClick={()=>setMessage('')}>{message}</button>}
       {loading?<DataLoading/>:<>
-        {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans}/>}
+        {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans} api={api}/>}
         {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
         {view==='locations'&&isAdmin&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='scanner'&&<Scanner locations={locations} api={api} refresh={loadAll} notify={notify}/>}
         {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='users'&&me.role==='ADMIN'&&<Users rows={users} currentId={me.id} api={api} refresh={loadAll} notify={notify}/>}
-        {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans}/>}
+        {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans} api={api} refresh={loadAll}/>}
+        {view==='checklist'&&isAdmin&&<ScanChecklist api={api}/>}
       </>}
     </main>
   </div>
@@ -104,9 +107,9 @@ function Login({onLogin}:{onLogin:(token:string,user:User)=>void}){
   return <main className="loginPage"><section className="loginIntro"><div className="brandMark large"><span/></div><p>BLUE ROCK</p><h1>Every asset.<br/>Every movement.<br/><em>Accounted for.</em></h1><small>Tools, equipment and display sample control for stronger operations.</small></section><section className="loginPanel"><form onSubmit={submit}><span className="eyebrow">SECURE ACCESS</span><h2>Welcome back</h2><p>Sign in to BlueRock Inventory Management.</p><label>Username<input value={username} onChange={e=>setUsername(e.target.value)} autoComplete="username" required/></label><label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></label>{error&&<div className="error">{error}</div>}<button className="primary" disabled={busy}>{busy?'Signing in…':'Sign in'} <ChevronRight size={17}/></button><small className="secure"><ShieldCheck size={14}/> Authorized personnel only</small></form></section></main>
 }
 
-function Dashboard({materials,issues,locations,scans}:{materials:Material[];issues:Issue[];locations:Location[];scans:Scan[]}){
+function Dashboard({materials,issues,locations,scans,api}:{materials:Material[];issues:Issue[];locations:Location[];scans:Scan[];api:Api}){
   const units=materials.flatMap(m=>m.units);const defective=units.filter(unit=>unit.condition!=='GOOD').length;
-  return <><section className="stats"><Stat icon={<PackageCheck/>} label="Total Units" value={units.length} note="Individually barcoded"/><Stat icon={<Boxes/>} label="Material Types" value={materials.length} note="Grouped inventory"/><Stat icon={<AlertTriangle/>} label="Open Defects" value={issues.length} note={issues.length?'Needs attention':'All clear'} alert={issues.length>0}/><Stat icon={<MapPin/>} label="Locations" value={locations.length} note={`${defective} units need review`}/></section><section className="dashboardGrid"><div className="panel"><PanelHead title="Inventory by material" subtitle="Largest material groups"/><div className="materialSummary">{[...materials].sort((a,b)=>b.units.length-a.units.length).slice(0,6).map(material=><div key={material.id}><img src={material.image_url||'/materials/scaffolding.jpg'} alt=""/><div><strong>{material.name}</strong><small>{barcodeRange(material)}</small></div><b>{material.units.length}</b></div>)}</div></div><div className="panel"><PanelHead title="Recent movement" subtitle="Latest scan activity"/><ScanTable rows={scans.slice(0,7)}/></div></section></>
+  return <><section className="stats"><Stat icon={<PackageCheck/>} label="Total Units" value={units.length} note="Individually barcoded"/><Stat icon={<Boxes/>} label="Material Types" value={materials.length} note="Grouped inventory"/><Stat icon={<AlertTriangle/>} label="Open Defects" value={issues.length} note={issues.length?'Needs attention':'All clear'} alert={issues.length>0}/><Stat icon={<MapPin/>} label="Locations" value={locations.length} note={`${defective} units need review`}/></section><section className="dashboardGrid"><div className="panel"><PanelHead title="Inventory by material" subtitle="Largest material groups"/><div className="materialSummary">{[...materials].sort((a,b)=>b.units.length-a.units.length).slice(0,6).map(material=><div key={material.id}><img src={material.image_url||'/materials/scaffolding.jpg'} alt=""/><div><strong>{material.name}</strong><small>{barcodeRange(material)}</small></div><b>{material.units.length}</b></div>)}</div></div><div className="panel"><PanelHead title="Recent movement" subtitle="Latest scan activity"/><ScanTable rows={scans.slice(0,7)} api={api}/></div></section></>
 }
 function Stat({icon,label,value,note,alert}:{icon:ReactNode;label:string;value:number;note:string;alert?:boolean}){return <div className={`stat ${alert?'alert':''}`}><div className="statIcon">{icon}</div><div><small>{label}</small><strong>{value.toLocaleString()}</strong><span>{note}</span></div></div>}
 
@@ -178,6 +181,7 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
   const videoRef=useRef<HTMLVideoElement>(null);
   const controlsRef=useRef<IScannerControls|null>(null);
   const busyRef=useRef(false);
+  const transactionRef=useRef<string|null>(null);
   const[form,setForm]=useState({locationId:locations[0]?.id||'',condition:'GOOD',notes:'',reportIssue:false,issueType:'Damaged equipment'});
   const[barcode,setBarcode]=useState('');
   const[manualBarcode,setManualBarcode]=useState('');
@@ -196,7 +200,7 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
   useEffect(()=>()=>controlsRef.current?.stop(),[]);
 
   function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;setScanning(false);busyRef.current=false}
-  function resetScan(){stopCamera();setBarcode('');setManualBarcode('');setMatch(null);setAttemptId('');setMethod('CAMERA');setGeo(null);setEvidence('');setError('')}
+  function resetScan(){stopCamera();transactionRef.current=null;setBarcode('');setManualBarcode('');setMatch(null);setAttemptId('');setMethod('CAMERA');setGeo(null);setEvidence('');setError('')}
 
   async function validateBarcode(value:string,captureMethod:'CAMERA'|'MANUAL'){
     const normalized=value.trim().toUpperCase();
@@ -212,7 +216,7 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
         setError(next>=2?'Barcode not found. Manual entry is now available and requires a barcode photo.':'Barcode not found. Try scanning once more.');
         return;
       }
-      setMatch(result.item);setError('');
+      transactionRef.current=crypto.randomUUID();setMatch(result.item);setError('');
     }catch(reason){setError(locationError(reason))}finally{setBusy(false)}
   }
 
@@ -255,12 +259,12 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
     if(method==='MANUAL'&&!evidence){setError('Take a clear photo showing the barcode before submitting manual entry');return}
     setBusy(true);setError('');
     try{
-      await api('/api/scans',{method:'POST',body:JSON.stringify({
+      const result=await api<{replaced?:boolean;duplicate?:boolean}>('/api/scans',{method:'POST',body:JSON.stringify({
         barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
         reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,
-        validationAttemptId:attemptId,captureMethod:method,...geo,
+        validationAttemptId:attemptId,captureMethod:method,clientTransactionId:transactionRef.current,...geo,
       })});
-      notify(`${match.barcode} scanned successfully`);
+      notify(result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`);
       resetScan();setFailures(0);setForm(current=>({...current,notes:'',reportIssue:false}));
       await refresh();
     }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{setBusy(false)}
@@ -291,8 +295,19 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
   </section>
 }
 
-function Scans({rows}:{rows:Scan[]}){return <><section className="pageHero"><div><span className="eyebrow">IMMUTABLE AUDIT TRAIL</span><h2>Scan History</h2><p>Every recorded inventory movement.</p></div><span className="recordCount">{rows.length} records</span></section><section className="panel"><ScanTable rows={rows}/></section></>}
-function ScanTable({rows}:{rows:Scan[]}){return <div className="tableScroll"><table><thead><tr><th>Asset</th><th>Movement</th><th>Condition</th><th>Scanner</th><th>Time &amp; GPS</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><td><strong>{row.name}</strong><small>{row.barcode}</small></td><td>{row.previous_location_name||'Unassigned'} <span className="arrow">→</span> {row.new_location_name||'—'}</td><td><Status value={row.condition}/></td><td>{row.scanner_name||'—'}</td><td>{formatDate(row.scanned_at)}{row.latitude!=null&&row.longitude!=null&&<small>{pretty(row.capture_method||'CAMERA')} · {Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</small>}</td></tr>)}</tbody></table>{rows.length===0&&<Empty text="No scans recorded yet"/>}</div>}
+function Scans({rows,api,refresh}:{rows:Scan[];api:Api;refresh:()=>Promise<void>}){
+  return <><section className="pageHero"><div><span className="eyebrow">ROLLING 24-HOUR RECORDS</span><h2>Scan History</h2><p>Latest scan per barcode window. Earlier submissions and photos remain in the audit trail.</p></div><button className="secondary" onClick={()=>void refresh()}>Refresh · {rows.length} recent records</button></section><section className="panel"><ScanTable rows={rows} api={api}/></section></>
+}
+function ScanTable({rows,api}:{rows:Scan[];api:Api}){
+  return <div className="tableScroll"><table><thead><tr><th>Asset</th><th>Latest movement</th><th>Condition</th><th>Scanner</th><th>Time &amp; GPS</th><th>24-hour window</th><th>Evidence</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}>
+    <td><strong>{row.name}</strong><small>{row.barcode}</small></td>
+    <td>{row.previous_location_name||'Unassigned'} <span className="arrow">→</span> {row.new_location_name||'—'}</td>
+    <td><Status value={row.condition}/></td><td>{row.scanner_name||'—'}</td>
+    <td>{formatDate(row.scanned_at)}{row.latitude!=null&&row.longitude!=null&&<small>{pretty(row.capture_method||'CAMERA')} · {Number(row.latitude).toFixed(5)}, {Number(row.longitude).toFixed(5)}</small>}</td>
+    <td><small>Started {formatDate(row.window_started_at)}</small><small>Expires {formatDate(row.window_expires_at)}</small><small>{row.scan_count} submission{row.scan_count===1?'':'s'} · latest shown</small></td>
+    <td>{row.photo_count>0?<ScanEvidence scanId={row.id} photoCount={row.photo_count} api={api}/>:<small>No photo attached</small>}</td>
+  </tr>)}</tbody></table>{rows.length===0&&<Empty text="No scans recorded yet"/>}</div>
+}
 
 function ImagePreview({material,close}:{material:Material;close:()=>void}){return <div className="modalBackdrop imagePreviewBackdrop" onMouseDown={event=>{if(event.currentTarget===event.target)close()}}><section className="imagePreview"><button className="imagePreviewClose" onClick={close} aria-label="Close image preview"><X/></button><img src={material.image_url||'/materials/scaffolding.jpg'} alt={material.name}/><div><span>{pretty(material.inventory_type)}</span><h2>{material.name}</h2><code>{barcodeRange(material)}</code></div></section></div>}
 function Modal({title,subtitle,close,children}:{title:string;subtitle:string;close:()=>void;children:ReactNode}){return <div className="modalBackdrop" onMouseDown={event=>{if(event.currentTarget===event.target)close()}}><section className="modal"><header><div><h2>{title}</h2><p>{subtitle}</p></div><button onClick={close}><X/></button></header>{children}</section></div>}
