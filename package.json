@@ -12,7 +12,9 @@
     "test:scan-access": "tsx scripts/test-scan-access.ts",
     "test:scan-evidence": "tsx scripts/test-scan-evidence.ts",
     "test:navigation": "tsx scripts/test-view-navigation.ts",
-    "test:report-xlsx": "tsx scripts/test-report-xlsx.ts"
+    "test:report-xlsx": "tsx scripts/test-report-xlsx.ts",
+    "test:sample-assignments": "tsx scripts/test-material-assignments.ts",
+    "test:material-api": "node --experimental-test-module-mocks --import tsx scripts/test-material-api.ts"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",

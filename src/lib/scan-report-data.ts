@@ -1,17 +1,19 @@
 import { db } from '@/lib/db';
 import type { ReportPeriod } from '@/lib/scan-report-periods';
+import type { ReportInventoryType } from '@/lib/scan-report-scope';
 
 type Timestamp = Date | string;
 export type ChecklistRow = {
   id: string; barcode: string; name: string; inventory_type: 'TOOL' | 'SAMPLE';
   location_name: string | null; status: 'SCANNED' | 'NOT_SCANNED';
+  customer_name: string | null; employee_name: string | null;
   scan_id: string | null; scanned_at: Timestamp | null;
   window_started_at: Timestamp | null; window_expires_at: Timestamp | null;
   scanner_name: string | null; condition: string | null; photo_count: number;
   latitude: number | null; longitude: number | null; location_accuracy: number | null;
   period_scan_count: number; period_scanned: boolean; period_photo_count: number;
 };
-export type ScanReport = ReportPeriod & { rows: ChecklistRow[] };
+export type ScanReport = ReportPeriod & { rows: ChecklistRow[]; inventoryType: ReportInventoryType };
 
 export async function reportClock(sql: ReturnType<typeof db>) {
   // PostgreSQL timestamp text depends on connection DateStyle. Numeric epochs
@@ -30,7 +32,7 @@ export async function reportClock(sql: ReturnType<typeof db>) {
   return {now, anchor};
 }
 
-export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>): Promise<ScanReport[]> {
+export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>, inventoryType: ReportInventoryType = 'ALL'): Promise<ScanReport[]> {
   if (!periods.length) return [];
   const contexts = periods.map(period => ({report_id: period.id, starts_at: period.startsAt,
     ends_at: period.endsAt, as_of: period.asOf, is_current: period.current}));
@@ -41,6 +43,7 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
         as p(report_id text,starts_at timestamptz,ends_at timestamptz,as_of timestamptz,is_current boolean)
     )
     select p.report_id,i.id,i.barcode,i.name,i.inventory_type,l.name as location_name,
+      m.customer_name,m.employee_name,
       case when w.expires_at>p.as_of then 'SCANNED' else 'NOT_SCANNED' end as status,
       s.id as scan_id,
       to_char(s.scanned_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as scanned_at,
@@ -50,6 +53,7 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
       s.latitude,s.longitude,s.location_accuracy,
       activity.period_scan_count,activity.period_scan_count>0 as period_scanned,activity.period_photo_count
     from periods p cross join ims_inventory_items i
+    left join ims_materials m on m.id=i.material_id
     left join lateral (
       select id,scanned_at,new_location_id,scanner_user_id,condition,scan_window_id,latitude,longitude,location_accuracy
       from ims_scans where inventory_item_id=i.id and scanned_at<=p.as_of
@@ -75,6 +79,7 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
       when future.id is not null then future.previous_location_id else i.current_location_id end
     left join ims_users u on u.id=s.scanner_user_id
     where i.created_at<=p.as_of
+      and (${inventoryType}='ALL' or i.inventory_type=${inventoryType})
       and (p.is_current and not i.archived
         or not p.is_current and (i.archived_at is null or i.archived_at>p.as_of))
     order by p.starts_at,i.name,i.barcode
@@ -85,5 +90,5 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
     group.push(row);
     groups.set(report_id, group);
   }
-  return periods.map(period => ({...period, rows: groups.get(period.id) ?? []}));
+  return periods.map(period => ({...period, inventoryType, rows: groups.get(period.id) ?? []}));
 }

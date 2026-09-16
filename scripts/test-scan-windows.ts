@@ -227,6 +227,57 @@ async function main() {
     assert.equal((await sql`select count(distinct scan_window_id)::int as count from ims_scans where inventory_item_id=${a.id}`)[0].count, 2);
     pass('monthly reports count a repeatedly scanned unit once per day while retaining event totals and fixed barcode windows');
 
+    const sampleFixtures = [
+      {code: 'SPC', customer: 'Sample customer', employee: null},
+      {code: 'SPE', customer: null, employee: 'Sample employee'},
+      {code: 'SPB', customer: 'Both customer', employee: 'Both employee'},
+    ];
+    const sampleUnits: postgres.Row[] = [];
+    for (const fixture of sampleFixtures) {
+      const [material] = await sql`insert into ims_materials(inventory_type,name,code,customer_name,employee_name)
+        values('SAMPLE',${fixture.code},${fixture.code},${fixture.customer},${fixture.employee}) returning id`;
+      const [unit] = await sql`insert into ims_inventory_items(barcode,inventory_type,name,material_id,unit_number,created_at)
+        values(${`SP-${fixture.code}-0001`},'SAMPLE',${fixture.code},${material.id},1,${at(-DAY)}) returning *`;
+      sampleUnits.push(unit);
+    }
+    const sampleScan = await scan(sampleUnits[0], at(2 * 3_600_000), {evidenceImageUrl: 'data:image/jpeg;base64,sample-photo'});
+    const sampleRepeat = await scan(sampleUnits[0], at(3 * 3_600_000));
+    assert.equal(sampleRepeat.replaced, true);
+    assert.equal(sampleRepeat.scan.scan_window_id, sampleScan.scan.scan_window_id);
+    const sampleDays = await reportsAt(periods, sql, 'SAMPLE');
+    const toolDays = await reportsAt(periods, sql, 'TOOL');
+    assert.equal(sampleDays[0].inventoryType, 'SAMPLE');
+    assert.equal(toolDays[0].inventoryType, 'TOOL');
+    assert.ok(sampleDays.every(day => day.rows.length === 3 && day.rows.every(row => row.inventory_type === 'SAMPLE')));
+    assert.ok(toolDays.every(day => day.rows.length > 0 && day.rows.every(row => row.inventory_type === 'TOOL')));
+    assert.equal(sampleDays[0].rows.find(row => row.id === sampleUnits[0].id)?.period_scan_count, 2);
+    assert.equal(sampleDays[0].rows.find(row => row.id === sampleUnits[0].id)?.period_photo_count, 1);
+    assert.equal(sampleDays[0].rows.find(row => row.id === sampleUnits[0].id)?.status, 'SCANNED');
+    assert.equal(sampleDays[1].rows.find(row => row.id === sampleUnits[0].id)?.period_scan_count, 0);
+    assert.equal(sampleDays[1].rows.find(row => row.id === sampleUnits[0].id)?.status, 'NOT_SCANNED');
+    for (let index = 0; index < sampleFixtures.length; index++) {
+      const row = sampleDays[0].rows.find(row => row.id === sampleUnits[index].id)!;
+      assert.equal(row.customer_name, sampleFixtures[index].customer);
+      assert.equal(row.employee_name, sampleFixtures[index].employee);
+    }
+    const sampleChecklist = await scanChecklist('current', sql, 'SAMPLE');
+    assert.equal(sampleChecklist.inventoryType, 'SAMPLE');
+    assert.equal(sampleChecklist.rows.length, 3);
+    const sampleMonthly = await scanMonthlyReport(reportDate(base).slice(0, 7), sql, 'SAMPLE');
+    assert.equal(sampleMonthly.inventoryType, 'SAMPLE');
+    assert.ok(sampleMonthly.reports.every(day => day.rows.every(row => row.inventory_type === 'SAMPLE')));
+    assert.deepEqual(sampleMonthly.reports.find(day => day.id === sampleDays[0].id), sampleDays[0]);
+    const toolChecklist = await scanChecklist('current', sql, 'TOOL');
+    assert.equal(toolChecklist.inventoryType, 'TOOL');
+    assert.ok(toolChecklist.rows.every(row => row.inventory_type === 'TOOL'));
+    const toolMonthly = await scanMonthlyReport(reportDate(base).slice(0, 7), sql, 'TOOL');
+    assert.equal(toolMonthly.inventoryType, 'TOOL');
+    assert.ok(toolMonthly.reports.every(day => day.rows.every(row => row.inventory_type === 'TOOL')));
+    assert.deepEqual(toolMonthly.reports.find(day => day.id === toolDays[0].id), toolDays[0]);
+    const allChecklist = await scanChecklist('current', sql);
+    assert.equal(allChecklist.rows.length, toolChecklist.rows.length + sampleChecklist.rows.length);
+    pass('sample/material daily and monthly reports isolate domains, retain customer/employee assignments, and share rolling scan/photo logic');
+
     const archiveAnchor = at(-40 * DAY);
     await sql`update ims_scan_report_settings set anchor_at=${archiveAnchor} where id=true`;
     const archivedHistoryUnit = await item('MONTHLY-ARCHIVE-001', archiveAnchor);

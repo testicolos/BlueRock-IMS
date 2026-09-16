@@ -41,6 +41,8 @@ create table if not exists ims_materials (
   image_url text,
   image_source_url text,
   description text,
+  customer_name varchar(160),
+  employee_name varchar(160),
   active boolean not null default true,
   created_by uuid references ims_users(id),
   created_at timestamptz not null default now(),

@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { reportScopeLabel, scopedReportRows, type ReportInventoryType } from '@/lib/scan-report-scope';
 
 type Timestamp = string | Date;
 export type ScanReportRow = {
@@ -7,6 +8,8 @@ export type ScanReportRow = {
   name: string;
   inventory_type: string;
   location_name?: string | null;
+  customer_name?: string | null;
+  employee_name?: string | null;
   status: 'SCANNED' | 'NOT_SCANNED';
   scan_id?: string | null;
   scanned_at?: Timestamp | null;
@@ -29,12 +32,14 @@ export type DailyScanReport = {
   endsAt: Timestamp;
   reportDate: string;
   generatedAt?: Timestamp;
+  inventoryType?: ReportInventoryType;
   rows: ScanReportRow[];
 };
 export type MonthlyScanReport = {
   month: string;
   generatedAt: Timestamp;
   timezone: string;
+  inventoryType?: ReportInventoryType;
   reports: DailyScanReport[];
 };
 
@@ -182,8 +187,22 @@ const UNIT_COLUMNS: Column[] = [
   { label: 'Photos in latest window', width: 25, format: '#,##0' },
 ];
 
-function unitValues(row: ScanReportRow): ExcelJS.CellValue[] {
-  return [text(row.barcode), text(row.name), text(row.inventory_type), text(row.location_name), row.status === 'SCANNED' ? 'SCANNED' : 'NOT SCANNED',
+const SAMPLE_ASSIGNMENT_COLUMNS: Column[] = [
+  { label: 'Customer', width: 30 }, { label: 'Employee', width: 30 },
+];
+
+function assignmentValues(row: ScanReportRow, inventoryType: ReportInventoryType): ExcelJS.CellValue[] {
+  return inventoryType === 'SAMPLE' ? [text(row.customer_name), text(row.employee_name)] : [text(row.location_name)];
+}
+
+function unitColumns(inventoryType: ReportInventoryType): Column[] {
+  return inventoryType === 'SAMPLE'
+    ? [...UNIT_COLUMNS.slice(0, 1), { label: 'Sample / unit', width: 36 }, UNIT_COLUMNS[2], ...SAMPLE_ASSIGNMENT_COLUMNS, ...UNIT_COLUMNS.slice(4)]
+    : UNIT_COLUMNS;
+}
+
+function unitValues(row: ScanReportRow, inventoryType: ReportInventoryType): ExcelJS.CellValue[] {
+  return [text(row.barcode), text(row.name), text(row.inventory_type), ...assignmentValues(row, inventoryType), row.status === 'SCANNED' ? 'SCANNED' : 'NOT SCANNED',
     row.period_scanned ? 'YES' : 'NO', row.period_scan_count, row.period_photo_count, localDate(row.scanned_at), localDate(row.window_started_at),
     localDate(row.window_expires_at), text(row.scanner_name), text(row.condition).replaceAll('_', ' '), row.latitude ?? null, row.longitude ?? null,
     row.location_accuracy ?? null, row.photo_count];
@@ -191,33 +210,41 @@ function unitValues(row: ScanReportRow): ExcelJS.CellValue[] {
 
 export function buildDailyScanWorkbook(report: DailyScanReport): ExcelJS.Workbook {
   reportDate(report.reportDate);
+  const inventoryType = report.inventoryType ?? 'ALL';
+  const rows = scopedReportRows(report.rows, inventoryType);
+  const columns = unitColumns(inventoryType);
+  const scopeLabel = reportScopeLabel(inventoryType);
   const workbook = createWorkbook(report.generatedAt ?? new Date());
-  const sheet = addSheet(workbook, 'Daily checklist', 'BlueRock IMS | Daily scan checklist',
+  const sheet = addSheet(workbook, 'Daily checklist', `BlueRock IMS | ${scopeLabel} daily checklist`,
     `${report.reportDate} period start date | Qatar/Saudi time (UTC+3) | ${report.current ? 'PROVISIONAL — period in progress' : 'CLOSED DAILY REPORT'}`,
-    UNIT_COLUMNS, report.generatedAt ?? workbook.created);
+    columns, report.generatedAt ?? workbook.created);
   sheet.getCell('D3').value = 'Period start (UTC+3)';
   sheet.getCell('E3').value = localDate(report.startsAt);
   sheet.getCell('E3').numFmt = DATE_TIME_FORMAT;
   sheet.getCell('G3').value = 'Cutoff (UTC+3)';
   sheet.getCell('H3').value = localDate(report.asOf);
   sheet.getCell('H3').numFmt = DATE_TIME_FORMAT;
-  note(sheet, 4, 'Reports retain the existing 24-hour cadence (not midnight resets), labelled by UTC+3 start date. Rolling status uses each barcode’s separate fixed 24-hour window.', UNIT_COLUMNS.length);
-  note(sheet, 5, 'Source: BlueRock IMS backend. Every barcode is one unit. Rescans count as submissions, not extra units. Photo totals are counts; view images securely in the app.', UNIT_COLUMNS.length);
-  const totals = summary(report.rows);
+  note(sheet, 4, 'Reports retain the existing 24-hour cadence (not midnight resets), labelled by UTC+3 start date. Rolling status uses each barcode’s separate fixed 24-hour window.', columns.length);
+  note(sheet, 5, 'Source: BlueRock IMS backend. Every barcode is one unit. Rescans count as submissions, not extra units. Photo totals are counts; view images securely in the app.', columns.length);
+  if (inventoryType === 'SAMPLE') note(sheet, 6, 'Customer and Employee show the current sample assignment, including when viewing historical scan results.', columns.length);
+  const totals = summary(rows);
   metric(sheet, 1, 'Eligible units', totals.units);
   metric(sheet, 4, 'Scanned at cutoff', totals.covered);
   metric(sheet, 7, 'Not scanned at cutoff', totals.units - totals.covered);
   metric(sheet, 10, 'Scanned in period', totals.scanned);
   metric(sheet, 13, 'Submissions', totals.submissions);
   metric(sheet, 16, 'Photos in period', totals.photos);
-  addTable(sheet, 'DailyScanUnits', UNIT_COLUMNS, report.rows.map(unitValues));
+  addTable(sheet, 'DailyScanUnits', columns, rows.map(row => unitValues(row, inventoryType)));
   return workbook;
 }
 
 export function buildMonthlyScanWorkbook(report: MonthlyScanReport): ExcelJS.Workbook {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(report.month)) throw new Error('INVALID_REPORT_MONTH');
+  const inventoryType = report.inventoryType ?? 'ALL';
+  const scopeLabel = reportScopeLabel(inventoryType);
   const seenDates = new Set<string>();
-  const reports = [...report.reports].sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+  const reports = report.reports.map(day => ({...day, rows: scopedReportRows(day.rows, inventoryType)}))
+    .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
   for (const day of reports) {
     reportDate(day.reportDate);
     if (!day.reportDate.startsWith(`${report.month}-`) || seenDates.has(day.reportDate)) throw new Error('INVALID_REPORT_MONTH_SCOPE');
@@ -239,7 +266,7 @@ export function buildMonthlyScanWorkbook(report: MonthlyScanReport): ExcelJS.Wor
     { label: 'Photos during period', width: 25, format: '#,##0' },
     { label: 'Period start (UTC+3)', width: 25, format: DATE_TIME_FORMAT },
   ];
-  const daily = addSheet(workbook, 'Monthly summary', 'BlueRock IMS | Monthly scan results', subtitle, dailyColumns, report.generatedAt);
+  const daily = addSheet(workbook, 'Monthly summary', `BlueRock IMS | ${scopeLabel} monthly results`, subtitle, dailyColumns, report.generatedAt);
   note(daily, 4, 'Rolling coverage is the share of eligible units whose fixed 24-hour window is active at cutoff. Activity counts distinct units submitted during each report period.', dailyColumns.length);
   note(daily, 5, 'Source: BlueRock IMS backend. Reports retain the existing 24-hour cadence, not midnight resets. A period is assigned to the month of its start date (UTC+3).', dailyColumns.length);
   const unitMap = new Map<string, { row: ScanReportRow; days: number; coveredDays: number; scannedDays: number; submissions: number; photos: number }>();
@@ -265,28 +292,31 @@ export function buildMonthlyScanWorkbook(report: MonthlyScanReport): ExcelJS.Wor
   }));
 
   const monthlyColumns: Column[] = [
-    { label: 'Barcode', width: 25 }, { label: 'Material / unit', width: 36 }, { label: 'Inventory type', width: 19 },
-    { label: 'Location at latest cutoff', width: 28 }, { label: 'Eligible report days', width: 23, format: '#,##0' },
+    { label: 'Barcode', width: 25 }, { label: inventoryType === 'SAMPLE' ? 'Sample / unit' : 'Material / unit', width: 36 }, { label: 'Inventory type', width: 19 },
+    ...(inventoryType === 'SAMPLE' ? SAMPLE_ASSIGNMENT_COLUMNS : [{ label: 'Location at latest cutoff', width: 28 }]),
+    { label: 'Eligible report days', width: 23, format: '#,##0' },
     { label: 'Days scanned at cutoff', width: 24, format: '#,##0' }, { label: 'Days not scanned at cutoff', width: 26, format: '#,##0' },
     { label: 'Days with submissions', width: 24, format: '#,##0' }, { label: 'Total submissions', width: 23, format: '#,##0' },
     { label: 'Total photos in period', width: 25, format: '#,##0' }, { label: 'Latest scan (UTC+3)', width: 25, format: DATE_TIME_FORMAT },
     { label: 'Latest scanner', width: 27 },
   ];
-  const monthly = addSheet(workbook, 'Unit monthly totals', 'BlueRock IMS | Unit monthly totals', subtitle, monthlyColumns, report.generatedAt);
+  const monthly = addSheet(workbook, 'Unit monthly totals', `BlueRock IMS | ${scopeLabel} unit monthly totals`, subtitle, monthlyColumns, report.generatedAt);
   note(monthly, 4, 'One row per inventory unit. Eligible report days can differ when units are added or archived. Provisional period counts may change.', monthlyColumns.length);
   note(monthly, 5, 'Days with submissions measures actual scan activity; days scanned at cutoff measures fixed 24-hour rolling coverage. Latest scan may predate the month.', monthlyColumns.length);
+  if (inventoryType === 'SAMPLE') note(monthly, 6, 'Customer and Employee show the current sample assignment, including when viewing historical scan results.', monthlyColumns.length);
   metric(monthly, 1, 'Distinct units', units.length);
   metric(monthly, 4, 'Units scanned in month', units.filter(unit => unit.scannedDays > 0).length);
   metric(monthly, 7, 'Total submissions', units.reduce((total, unit) => total + unit.submissions, 0));
   metric(monthly, 10, 'Total period photos', units.reduce((total, unit) => total + unit.photos, 0));
   addTable(monthly, 'MonthlyUnitTotals', monthlyColumns, units.map(unit => [text(unit.row.barcode), text(unit.row.name), text(unit.row.inventory_type),
-    text(unit.row.location_name), unit.days, unit.coveredDays, unit.days - unit.coveredDays, unit.scannedDays, unit.submissions, unit.photos,
+    ...assignmentValues(unit.row, inventoryType), unit.days, unit.coveredDays, unit.days - unit.coveredDays, unit.scannedDays, unit.submissions, unit.photos,
     localDate(unit.row.scanned_at), text(unit.row.scanner_name)]));
 
-  const detailColumns: Column[] = [{ label: 'Period start date (UTC+3)', width: 27, format: DATE_FORMAT }, { label: 'Report status', width: 22 }, ...UNIT_COLUMNS];
-  const detail = addSheet(workbook, 'Unit daily detail', 'BlueRock IMS | Unit-by-day detail', subtitle, detailColumns, report.generatedAt);
-  note(detail, 4, 'One row per eligible unit per report date. Use the table filters to review a barcode, location, report day, or rolling scan status.', detailColumns.length);
+  const detailColumns: Column[] = [{ label: 'Period start date (UTC+3)', width: 27, format: DATE_FORMAT }, { label: 'Report status', width: 22 }, ...unitColumns(inventoryType)];
+  const detail = addSheet(workbook, 'Unit daily detail', `BlueRock IMS | ${scopeLabel} unit-by-day detail`, subtitle, detailColumns, report.generatedAt);
+  note(detail, 4, `One row per eligible unit per report date. Use the table filters to review a barcode, ${inventoryType === 'SAMPLE' ? 'customer, employee' : 'location'}, report day, or rolling scan status.`, detailColumns.length);
   note(detail, 5, 'Source: BlueRock IMS backend. Times are Qatar/Saudi (UTC+3); current-period data is provisional. Embedded photos are omitted for privacy and file size.', detailColumns.length);
-  addTable(detail, 'MonthlyUnitDailyDetail', detailColumns, reports.flatMap(day => day.rows.map(row => [reportDate(day.reportDate), day.current ? 'PROVISIONAL' : 'CLOSED', ...unitValues(row)])));
+  if (inventoryType === 'SAMPLE') note(detail, 6, 'Customer and Employee show the current sample assignment, including when viewing historical scan results.', detailColumns.length);
+  addTable(detail, 'MonthlyUnitDailyDetail', detailColumns, reports.flatMap(day => day.rows.map(row => [reportDate(day.reportDate), day.current ? 'PROVISIONAL' : 'CLOSED', ...unitValues(row, inventoryType)])));
   return workbook;
 }

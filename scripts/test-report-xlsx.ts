@@ -4,6 +4,8 @@ import ExcelJS from 'exceljs';
 import { NextRequest } from 'next/server';
 import { createToken } from '../src/lib/auth';
 import { GET as exportReport } from '../src/app/api/scans/checklist/export/route';
+import { GET as checklistReport } from '../src/app/api/scans/checklist/route';
+import { reportInventoryType } from '../src/lib/scan-report-scope';
 import { buildDailyScanWorkbook, buildMonthlyScanWorkbook, type DailyScanReport, type ScanReportRow } from '../src/lib/scan-report-xlsx';
 
 const START = Date.parse('2024-02-01T04:00:00.000Z');
@@ -116,6 +118,50 @@ async function main() {
   const emptyMonth = await reopen(buildMonthlyScanWorkbook({ month: '2024-02', timezone: 'Asia/Qatar', generatedAt: new Date(), reports: [dayReport(0, [])] }));
   assert.equal(emptyMonth.worksheets[0].getCell('G11').value, null, 'Zero denominator coverage stays blank');
 
+  const samples: ScanReportRow[] = [
+    {...unscanned, id: 'sample-customer', barcode: 'SP-CUST-0001', customer_name: '=Customer', employee_name: null},
+    {...unscanned, id: 'sample-employee', barcode: 'SP-EMP-0001', customer_name: null, employee_name: '@Employee'},
+    {...unscanned, id: 'sample-both', barcode: 'SP-BOTH-0001', customer_name: 'Customer both', employee_name: 'Employee both',
+      status: 'SCANNED', period_scanned: true, period_scan_count: 2, period_photo_count: 1},
+  ];
+  const mixedRows = [scanned, ...samples];
+  const sampleDaily = (await reopen(buildDailyScanWorkbook({...dayReport(0, mixedRows), inventoryType: 'SAMPLE'}))).worksheets[0];
+  assert.match(String(sampleDaily.getCell('A1').value), /Samples/);
+  assert.equal(sampleDaily.getCell('B7').value, 3, 'Sample totals exclude tools even if given mixed input');
+  assert.equal(sampleDaily.getCell('E7').value, 1);
+  assert.equal(sampleDaily.getCell('N7').value, 2, 'Tool submissions do not enter sample totals');
+  assert.equal(sampleDaily.getCell('D10').value, 'Customer');
+  assert.equal(sampleDaily.getCell('E10').value, 'Employee');
+  assertLiteralText(sampleDaily.getCell('D11'), '=Customer');
+  assertLiteralText(sampleDaily.getCell('E12'), '@Employee');
+  assertLiteralText(sampleDaily.getCell('D13'), 'Customer both');
+  assertLiteralText(sampleDaily.getCell('E13'), 'Employee both');
+  assert.equal(sampleDaily.getCell('E11').value, '');
+  assert.equal(sampleDaily.getCell('D12').value, '');
+  assert.ok(!sampleDaily.getRow(10).values.toString().includes('Location'));
+  assert.match(String(sampleDaily.getCell('A6').value), /current sample assignment/);
+  const materialDaily = (await reopen(buildDailyScanWorkbook({...dayReport(0, mixedRows), inventoryType: 'TOOL'}))).worksheets[0];
+  assert.match(String(materialDaily.getCell('A1').value), /Materials/);
+  assert.equal(materialDaily.getCell('B7').value, 1);
+  assert.equal(materialDaily.getCell('D10').value, 'Location at cutoff');
+  assertLiteralText(materialDaily.getCell('A11'), scanned.barcode);
+
+  const sampleMonth = await reopen(buildMonthlyScanWorkbook({month: '2024-02', inventoryType: 'SAMPLE',
+    generatedAt: new Date(), timezone: 'Asia/Qatar', reports: [dayReport(0, mixedRows), dayReport(1, mixedRows)]}));
+  assert.equal(sampleMonth.worksheets[0].getCell('E7').value, 3);
+  assert.equal(sampleMonth.worksheets[0].getCell('H7').value, 1);
+  assert.equal(sampleMonth.worksheets[0].getCell('J7').value, 4);
+  assert.equal(sampleMonth.worksheets[1].getCell('D10').value, 'Customer');
+  assert.equal(sampleMonth.worksheets[1].getCell('E10').value, 'Employee');
+  assert.equal(sampleMonth.worksheets[1].rowCount, 13);
+  assert.equal(sampleMonth.worksheets[2].getCell('F10').value, 'Customer');
+  assert.equal(sampleMonth.worksheets[2].getCell('G10').value, 'Employee');
+  assert.equal(sampleMonth.worksheets[2].rowCount, 16);
+  for (const worksheet of sampleMonth.worksheets) assert.match(String(worksheet.getCell('A1').value), /Samples/);
+  assert.equal(reportInventoryType(new URLSearchParams()), 'ALL');
+  assert.equal(reportInventoryType(new URLSearchParams('inventoryType=SAMPLE')), 'SAMPLE');
+  assert.equal(reportInventoryType(new URLSearchParams('inventoryType=TOOL')), 'TOOL');
+
   // Anonymous/scanner users and invalid selectors must be rejected before DB access.
   process.env.JWT_SECRET = randomUUID() + randomUUID();
   delete process.env.DATABASE_URL;
@@ -125,13 +171,23 @@ async function main() {
   assert.equal((await exportReport(new NextRequest(url))).status, 401);
   assert.equal((await exportReport(new NextRequest(url, { headers: { Authorization: 'Bearer invalid-token' } }))).status, 401);
   assert.equal((await exportReport(new NextRequest(url, { headers: { Authorization: `Bearer ${scannerToken}` } }))).status, 403);
-  for (const query of ['?month=2024-13', '?period=2024-02-01', '?period=current&month=2024-02', '?period=current&period=current', '?month=2024-02&month=2024-02', '?month=']) {
+  for (const inventoryType of ['TOOL', 'SAMPLE']) {
+    assert.equal((await checklistReport(new NextRequest(`http://localhost/api/scans/checklist?inventoryType=${inventoryType}`))).status, 401);
+    assert.equal((await checklistReport(new NextRequest(`http://localhost/api/scans/checklist?inventoryType=${inventoryType}`, {headers: {Authorization: `Bearer ${scannerToken}`}}))).status, 403);
+    assert.equal((await exportReport(new NextRequest(`${url}?inventoryType=${inventoryType}`, {headers: {Authorization: `Bearer ${scannerToken}`}}))).status, 403);
+  }
+  for (const query of ['?month=2024-13', '?period=2024-02-01', '?period=current&month=2024-02', '?period=current&period=current', '?month=2024-02&month=2024-02', '?month=',
+    '?inventoryType=ALL', '?inventoryType=OTHER', '?inventoryType=', '?inventoryType=SAMPLE&inventoryType=TOOL']) {
     const response = await exportReport(new NextRequest(`${url}${query}`, { headers: { Authorization: `Bearer ${adminToken}` } }));
     assert.equal(response.status, 400, query);
     assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
     assert.equal((await response.json()).success, false);
   }
-  console.log('PASS: daily/monthly XLSX round-trip, text/formula safety, UTC+3 typed dates, scoped leap-month totals, empty/unscanned/provisional reports, styling, filters, and admin-only access.');
+  for (const query of ['?inventoryType=ALL', '?inventoryType=OTHER', '?inventoryType=', '?inventoryType=SAMPLE&inventoryType=TOOL']) {
+    const response = await checklistReport(new NextRequest(`http://localhost/api/scans/checklist${query}`, {headers: {Authorization: `Bearer ${adminToken}`}}));
+    assert.equal(response.status, 400, query);
+  }
+  console.log('PASS: daily/monthly XLSX round-trip, text/formula safety, UTC+3 typed dates, material/sample isolation and assignments, scoped leap-month totals, empty/unscanned/provisional reports, styling, filters, selector validation, and admin-only access.');
 }
 
 void main().catch(error => { console.error(error); process.exitCode = 1; });

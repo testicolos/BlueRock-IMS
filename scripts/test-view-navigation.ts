@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { allowedViews, resolveView, viewUrl, type View } from '../src/lib/view-navigation';
 
 const origin = 'https://bluerock-ims.vercel.app';
-const expectedViews: View[] = ['dashboard', 'materials', 'locations', 'scanner', 'issues', 'users', 'scans', 'checklist'];
+const expectedViews: View[] = ['dashboard', 'materials', 'locations', 'scanner', 'issues', 'users', 'scans', 'checklist', 'samples-report'];
 let checks = 0;
 
 function check(name: string, run: () => void) {
@@ -70,7 +70,7 @@ check('scanner URL normalization preserves unrelated state', () => {
 });
 
 check('sequential navigation and saved history URLs restore the correct pages', () => {
-  const pages: View[] = ['materials', 'scanner', 'checklist', 'scans', 'dashboard'];
+  const pages: View[] = ['materials', 'scanner', 'checklist', 'samples-report', 'scans', 'dashboard'];
   const history: URL[] = [];
   let current = new URL(`${origin}/?filter=active#inventory`);
   for (const page of pages) {

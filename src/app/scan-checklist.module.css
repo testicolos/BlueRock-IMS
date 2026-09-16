@@ -57,6 +57,13 @@
 .table th:nth-child(4) { width: 18%; }
 .table th:nth-child(5) { width: 22%; }
 .table th:nth-child(6) { width: 14%; }
+.sampleTable { min-width: 1200px; }
+.sampleTable th:nth-child(1) { width: 19%; }
+.sampleTable th:nth-child(2), .sampleTable th:nth-child(3) { width: 11%; }
+.sampleTable th:nth-child(4) { width: 11%; }
+.sampleTable th:nth-child(5) { width: 17%; }
+.sampleTable th:nth-child(6) { width: 19%; }
+.sampleTable th:nth-child(7) { width: 12%; }
 .table td { line-height: 1.5; }
 .table td strong { font-size: 12px; }
 .table td small { font-size: 11px; margin-top: 5px; color: var(--muted); }

@@ -1,21 +1,10 @@
 import type { NextRequest } from 'next/server';
-import { z } from 'zod';
 
 import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
-
-const allocationSchema = z.object({ locationId: z.string().uuid(), count: z.number().int().min(1).max(1000) });
-const createSchema = z.object({
-  name: z.string().min(2).max(160),
-  code: z.string().min(2).max(12).regex(/^[A-Za-z0-9]+$/),
-  inventoryType: z.enum(['TOOL','SAMPLE']),
-  imageUrl: z.string().max(3_500_000).optional(),
-  imageSourceUrl: z.string().url().max(2000).optional().or(z.literal('')),
-  description: z.string().max(2000).optional(),
-  allocations: z.array(allocationSchema).max(50).default([]),
-});
+import { createMaterialSchema, materialAllocations, materialAssignment } from '@/lib/material-validation';
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,17 +33,18 @@ export async function POST(request: NextRequest) {
   try {
     const actor = await requireAuth(request,['ADMIN']);
     await ensureInventorySchema();
-    const parsed = createSchema.safeParse(await request.json());
-    if (!parsed.success) return fail('Invalid material',400,parsed.error.flatten());
+    const parsed = createMaterialSchema.safeParse(await request.json());
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message || 'Invalid material',400,parsed.error.flatten());
     const data = parsed.data;
     const code = data.code.toUpperCase();
     const prefix = data.inventoryType === 'TOOL' ? 'TL' : 'SP';
+    const assignment = materialAssignment(data.inventoryType, data);
     const result = await db().begin(async (tx) => {
-      const materialRows = await tx`insert into ims_materials(inventory_type,name,code,image_url,image_source_url,description,created_by)
-        values(${data.inventoryType},${data.name},${code},${data.imageUrl || null},${data.imageSourceUrl || null},${data.description || null},${actor.id}) returning *`;
+      const materialRows = await tx`insert into ims_materials(inventory_type,name,code,image_url,image_source_url,description,customer_name,employee_name,created_by)
+        values(${data.inventoryType},${data.name},${code},${data.imageUrl || null},${data.imageSourceUrl || null},${data.description || null},${assignment.customerName},${assignment.employeeName},${actor.id}) returning *`;
       const material = materialRows[0];
       let unitNumber = 1;
-      for (const allocation of data.allocations) {
+      for (const allocation of materialAllocations(data)) {
         for (let index=0; index<allocation.count; index+=1) {
           const barcode = `${prefix}-${code}-${String(unitNumber).padStart(4,'0')}`;
           await tx`insert into ims_inventory_items(barcode,inventory_type,name,material_id,unit_number,current_location_id,condition,status,created_by)

@@ -4,19 +4,19 @@ import { scanWindowMigration } from '@/lib/scan-windows';
 let ready: Promise<void> | null = null;
 
 export function ensureInventorySchema() {
-  if (!ready) ready = migrate().catch((error) => { ready = null; throw error; });
+  if (!ready) ready = migrateInventorySchema(db()).catch((error) => { ready = null; throw error; });
   return ready;
 }
 
-async function migrate() {
-  await db().begin(async (sql) => {
+export async function migrateInventorySchema(database: ReturnType<typeof db>) {
+  await database.begin(async (sql) => {
   // Serialize cold-start migrations across serverless instances.
   await sql`select pg_advisory_xact_lock(78243190)`;
   await sql`create table if not exists ims_schema_migrations (version text primary key,applied_at timestamptz not null default now())`;
   await sql`alter table ims_schema_migrations enable row level security`;
   await sql`revoke all on ims_schema_migrations from public`;
   const version = '2026-09-17-rolling-scans-v1';
-  if ((await sql`select version from ims_schema_migrations where version=${version}`).length) return;
+  if (!(await sql`select version from ims_schema_migrations where version=${version}`).length) {
   await sql`create table if not exists ims_materials (
     id uuid primary key default gen_random_uuid(),
     inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
@@ -58,5 +58,26 @@ async function migrate() {
   await sql`create index if not exists idx_scan_attempts_user_time on ims_scan_attempts(scanner_user_id,created_at desc)`;
   await sql.unsafe(scanWindowMigration);
   await sql`insert into ims_schema_migrations(version) values(${version})`;
+  }
+
+  // Keep each migration independent: existing installations already have the
+  // rolling-scan version, but must still receive new sample assignment columns.
+  const sampleVersion = '2026-09-17-sample-assignments-v1';
+  if (!(await sql`select version from ims_schema_migrations where version=${sampleVersion}`).length) {
+    await sql`alter table ims_materials add column if not exists customer_name varchar(160)`;
+    await sql`alter table ims_materials add column if not exists employee_name varchar(160)`;
+    // Existing samples remain unassigned until an administrator edits them.
+    // No scan, location, barcode, or movement history is rewritten.
+    await sql`alter table ims_materials enable row level security`;
+    await sql`revoke all on ims_materials from public`;
+    await sql`do $$ declare role_name text; begin
+      foreach role_name in array array['anon','authenticated'] loop
+        if exists(select 1 from pg_roles where rolname=role_name) then
+          execute format('revoke all on ims_materials from %I',role_name);
+        end if;
+      end loop;
+    end $$`;
+    await sql`insert into ims_schema_migrations(version) values(${sampleVersion})`;
+  }
   });
 }

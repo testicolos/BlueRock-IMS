@@ -12,6 +12,8 @@ type ChecklistRow = {
   name: string;
   inventory_type: string;
   location_name: string | null;
+  customer_name: string | null;
+  employee_name: string | null;
   status: 'SCANNED' | 'NOT_SCANNED';
   scan_id: string | null;
   scanned_at: string | null;
@@ -24,6 +26,7 @@ type ChecklistRow = {
 
 type ReportPeriod = { id: string; startsAt: string; endsAt: string; reportDate: string };
 type ChecklistResponse = {
+  inventoryType: 'TOOL' | 'SAMPLE';
   asOf: string;
   current: boolean;
   startsAt: string;
@@ -62,7 +65,9 @@ function displayCondition(value: string | null) {
   return value ? value.toLowerCase().replace(/_/g, ' ').replace(/^\w/, letter => letter.toUpperCase()) : 'Not recorded';
 }
 
-export default function ScanChecklist({ api, download }: { api: Api; download: (url: string) => Promise<void> }) {
+export default function ScanChecklist({ api, download, inventoryType }: { api: Api; download: (url: string) => Promise<void>; inventoryType: 'TOOL' | 'SAMPLE' }) {
+  const isSample = inventoryType === 'SAMPLE';
+  const reportTitle = isSample ? 'Samples report' : 'Materials scan checklist';
   const apiRef = useRef(api);
   const [period, setPeriod] = useState('current');
   const [periods, setPeriods] = useState<ReportPeriod[]>([]);
@@ -88,7 +93,7 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
     async function load() {
       try {
         const result = await apiRef.current<ChecklistResponse>(
-          `/api/scans/checklist?period=${encodeURIComponent(period)}`,
+          `/api/scans/checklist?inventoryType=${inventoryType}&period=${encodeURIComponent(period)}`,
           { cache: 'no-store', signal: controller.signal },
         );
         if (!active) return;
@@ -104,7 +109,7 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [period, refreshKey]);
+  }, [inventoryType, period, refreshKey]);
 
   useEffect(() => {
     if (period !== 'current') return;
@@ -112,15 +117,16 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
     return () => window.clearInterval(timer);
   }, [period]);
 
+  const scopedRows = useMemo(() => (data?.rows || []).filter(row => row.inventory_type === inventoryType), [data, inventoryType]);
   const rows = useMemo(() => {
     const term = query.trim().toLowerCase();
-    return (data?.rows || []).filter(row =>
+    return scopedRows.filter(row =>
       (status === 'ALL' || row.status === status) &&
-      (!term || `${row.barcode} ${row.name} ${row.location_name || ''} ${row.inventory_type === 'SAMPLE' ? 'display sample' : 'tool equipment'} ${row.scanner_name || ''}`.toLowerCase().includes(term)),
+      (!term || `${row.barcode} ${row.name} ${isSample ? `${row.customer_name || ''} ${row.employee_name || ''}` : row.location_name || ''} ${isSample ? 'display sample' : 'tool equipment'} ${row.scanner_name || ''}`.toLowerCase().includes(term)),
     );
-  }, [data, query, status]);
-  const total = data?.rows.length || 0;
-  const scanned = data?.rows.filter(row => row.status === 'SCANNED').length || 0;
+  }, [scopedRows, isSample, query, status]);
+  const total = scopedRows.length;
+  const scanned = scopedRows.filter(row => row.status === 'SCANNED').length;
 
   function changePeriod(next: string) {
     if (next === period) return;
@@ -137,7 +143,7 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
     setExportError('');
     try {
       const selection = kind === 'daily' ? `period=${encodeURIComponent(period)}` : `month=${encodeURIComponent(month)}`;
-      await download(`/api/scans/checklist/export?${selection}`);
+      await download(`/api/scans/checklist/export?inventoryType=${inventoryType}&${selection}`);
     } catch (caught) {
       setExportError(caught instanceof Error ? caught.message : 'Could not download the Excel report. Please try again.');
     } finally {
@@ -149,8 +155,8 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
     <header className={styles.heading}>
       <div>
         <span className="eyebrow">BARCODE COVERAGE</span>
-        <h2 id={titleId}>Scan checklist</h2>
-        <p>Track every equipment and sample barcode, including units that still need a scan.</p>
+        <h2 id={titleId}>{reportTitle}</h2>
+        <p>{isSample ? 'Track display sample barcodes by customer and employee, including units that still need a scan.' : 'Track tools and equipment barcodes, including units that still need a scan. Display samples have their own report.'}</p>
       </div>
       <button type="button" className={`secondary ${styles.refresh}`} disabled={loading || !!exporting} onClick={() => setRefreshKey(value => value + 1)}>
         <RefreshCw size={17} aria-hidden="true" />{loading ? 'Refreshing…' : 'Refresh'}
@@ -183,14 +189,14 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
         <button type="button" className="secondary" disabled={loading || !!exporting || !data || !month} onClick={() => void exportReport('monthly')}><Download size={17} aria-hidden="true" />{exporting === 'monthly' ? 'Preparing monthly Excel…' : 'Export monthly Excel'}</button>
         <p className={styles.periodRange}>Includes closed reports and the in-progress report, when applicable.</p>
       </div>
-      <p className={styles.exportNote}>Excel exports include all units, regardless of the search and status filters below. Report dates and times use UTC+3. Daily and monthly reports are grouped by the reporting period’s start date.</p>
+      <p className={styles.exportNote}>Excel exports include all {isSample ? 'sample' : 'tool and equipment'} units, regardless of the search and status filters below. Report dates and times use UTC+3. Daily and monthly reports are grouped by the reporting period’s start date.</p>
       {exportError && <div className={styles.exportError} role="alert"><strong>Excel download failed.</strong> {exportError}</div>}
       {exporting && <span className={styles.exportProgress} role="status">Preparing your {exporting} Excel report. The download will begin when it is ready.</span>}
     </section>
 
     <div className={styles.filters}>
-      <label className={styles.search}>Find a barcode or material
-        <span><Search size={17} aria-hidden="true" /><input type="search" placeholder="Barcode, material, location…" value={query} onChange={event => setQuery(event.target.value)} /></span>
+      <label className={styles.search}>{isSample ? 'Find a sample, customer or employee' : 'Find a barcode or material'}
+        <span><Search size={17} aria-hidden="true" /><input type="search" placeholder={isSample ? 'Barcode, sample, customer, employee…' : 'Barcode, material, location…'} value={query} onChange={event => setQuery(event.target.value)} /></span>
       </label>
       <label>Status
         <select value={status} onChange={event => setStatus(event.target.value as typeof status)}>
@@ -213,16 +219,16 @@ export default function ScanChecklist({ api, download }: { api: Api; download: (
       </div>
       <div className={styles.reportDetails}>
         <p><strong>{data.current ? 'Current status as of' : 'Closed snapshot at'}</strong> {displayDate(data.asOf)}</p>
-        <p>{data.current ? <>Updates every 60 seconds · Next automatic report: <strong>{displayDate(data.nextReportAt)}</strong></> : 'Scan statuses and evidence reflect the snapshot time; material, user and location names use their current labels.'}</p>
+        <p>{data.current ? <>Updates every 60 seconds · Next automatic report: <strong>{displayDate(data.nextReportAt)}</strong></> : isSample ? 'Scan statuses and evidence reflect the snapshot time; sample, user, customer and employee names use their current labels.' : 'Scan statuses and evidence reflect the snapshot time; material, user and location names use their current labels.'}</p>
       </div>
       <div className={styles.tablePanel} aria-busy={loading}>
         <div className={styles.tableHeading}><strong>{rows.length.toLocaleString()} of {total.toLocaleString()} units</strong><span id={tableHintId}>Scroll sideways to see all details</span></div>
-        {total === 0 ? <div className={styles.message}><ClipboardList size={30} aria-hidden="true" /><strong>No eligible units in this {data.current ? 'checklist' : 'report'}.</strong><p>Equipment and sample units will appear here when they are available in inventory.</p></div> : rows.length === 0 ? <div className={styles.message}><Search size={30} aria-hidden="true" /><strong>No units match these filters.</strong><p>Try another barcode, material, or status.</p><button type="button" className="secondary" onClick={() => { setQuery(''); setStatus('ALL'); }}>Clear filters</button></div> : <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Barcode scan checklist" aria-describedby={tableHintId}>
-          <table className={styles.table}>
-            <thead><tr><th scope="col">Material / barcode</th><th scope="col">Location</th><th scope="col">Scan status</th><th scope="col">Recorded scan</th><th scope="col">24-hour window</th><th scope="col">Photo evidence</th></tr></thead>
+        {total === 0 ? <div className={styles.message}><ClipboardList size={30} aria-hidden="true" /><strong>No eligible units in this {data.current ? 'checklist' : 'report'}.</strong><p>{isSample ? 'Sample units will appear here when they are available in inventory.' : 'Tool and equipment units will appear here when they are available in inventory.'}</p></div> : rows.length === 0 ? <div className={styles.message}><Search size={30} aria-hidden="true" /><strong>No units match these filters.</strong><p>{isSample ? 'Try another barcode, sample, customer, employee, or status.' : 'Try another barcode, material, or status.'}</p><button type="button" className="secondary" onClick={() => { setQuery(''); setStatus('ALL'); }}>Clear filters</button></div> : <div className={styles.tableScroll} tabIndex={0} role="region" aria-label={reportTitle} aria-describedby={tableHintId}>
+          <table className={`${styles.table}${isSample ? ` ${styles.sampleTable}` : ''}`}>
+            <thead><tr><th scope="col">{isSample ? 'Sample / barcode' : 'Material / barcode'}</th>{isSample ? <><th scope="col">Customer</th><th scope="col">Employee</th></> : <th scope="col">Location</th>}<th scope="col">Scan status</th><th scope="col">Recorded scan</th><th scope="col">24-hour window</th><th scope="col">Photo evidence</th></tr></thead>
             <tbody>{rows.map(row => <tr key={row.id}>
               <td><span className={styles.itemType}>{row.inventory_type === 'SAMPLE' ? 'Display sample' : 'Tool / Equipment'}</span><strong>{row.name}</strong><code>{row.barcode}</code></td>
-              <td>{row.location_name || 'Unassigned'}</td>
+              {isSample ? <><td>{row.customer_name || <span className={styles.muted}>Not specified</span>}</td><td>{row.employee_name || <span className={styles.muted}>Not specified</span>}</td></> : <td>{row.location_name || 'Unassigned'}</td>}
               <td><span className={`${styles.status} ${row.status === 'SCANNED' ? styles.scanned : styles.pending}`}>{row.status === 'SCANNED' ? <CheckCircle2 size={14} aria-hidden="true" /> : <Clock3 size={14} aria-hidden="true" />}{row.status === 'SCANNED' ? 'Scanned' : 'Not scanned'}</span></td>
               <td>{row.scanned_at ? <><strong>{displayDate(row.scanned_at)}</strong><small>{row.scanner_name || 'Scanner not recorded'}</small><small>Condition: {displayCondition(row.condition)}</small></> : <span className={styles.muted}>No scan recorded</span>}</td>
               <td>{row.window_started_at && row.window_expires_at ? <div className={styles.window}><small>Started {displayDate(row.window_started_at)}</small><strong>{row.status === 'SCANNED' ? 'Expires' : 'Expired'} {displayDate(row.window_expires_at)}</strong></div> : <span className={styles.muted}>Awaiting first scan</span>}</td>
