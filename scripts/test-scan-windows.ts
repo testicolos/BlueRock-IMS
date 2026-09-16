@@ -6,8 +6,10 @@ import postgres from 'postgres';
 import { recordScan, type RecordScanInput } from '../src/lib/record-scan';
 import { scanWindowMigration } from '../src/lib/scan-windows';
 import { scanRecords } from '../src/lib/scan-records';
-import { scanChecklist } from '../src/lib/scan-checklist';
+import { scanChecklist, scanMonthlyReport } from '../src/lib/scan-checklist';
 import { scanEvidenceRows } from '../src/lib/scan-evidence';
+import { reportsAt } from '../src/lib/scan-report-data';
+import { reportDate, reportPeriod } from '../src/lib/scan-report-periods';
 
 // Explicit test connection only. All objects live in a fresh, private schema;
 // search_path excludes public and cleanup removes only this generated schema.
@@ -19,8 +21,12 @@ async function main() {
   const options = { ssl: local ? false as const : 'require' as const, prepare: false, onnotice: () => {} };
   const control = postgres(url, { ...options, max: 1 });
   const sql = postgres(url, { ...options, max: 10, connection: { search_path: schemaName } });
-  const base = new Date('2025-01-01T23:30:00.000Z');
   const DAY = 86_400_000;
+  // Keep historical fixtures recent enough for the 30-day daily-report window,
+  // while retaining a scan schedule that crosses midnight.
+  const base = new Date();
+  base.setUTCDate(base.getUTCDate() - 3);
+  base.setUTCHours(23, 30, 0, 0);
   const at = (offset: number) => new Date(base.getTime() + offset);
   let checks = 0;
   function pass(label: string) { checks++; console.log(`PASS ${label}`); }
@@ -184,6 +190,66 @@ async function main() {
     assert.ok(!refreshedCurrent.rows.some(row => row.id === archived.id));
     await assert.rejects(scanChecklist(at(DAY + 1).toISOString(), sql), /INVALID_REPORT_PERIOD/);
     pass('historical checklists ignore future scans/photos, preserve earlier location/archive state and validate period boundaries');
+
+    const periods = [0, 1].map(index => reportPeriod(base.getTime(), Date.now(), index));
+    const batched = await reportsAt(periods, sql);
+    assert.equal(batched.length, 2);
+    assert.deepEqual(batched.map(report => report.id), periods.map(period => period.id));
+    for (let index = 0; index < periods.length; index += 1) {
+      assert.deepEqual(batched[index], (await reportsAt([periods[index]], sql))[0]);
+    }
+    assert.deepEqual(await reportsAt([], sql), []);
+    const firstDayA = batched[0].rows.find(row => row.id === a.id)!;
+    const secondDayA = batched[1].rows.find(row => row.id === a.id)!;
+    assert.equal(firstDayA.period_scan_count, 3);
+    assert.equal(firstDayA.period_scanned, true);
+    assert.equal(firstDayA.period_photo_count, 2);
+    assert.equal(secondDayA.period_scan_count, 2);
+    assert.equal(secondDayA.period_photo_count, 1);
+    assert.equal(batched[0].rows.find(row => row.id === b.id)?.period_scan_count, 1);
+    assert.equal(batched[1].rows.find(row => row.id === b.id)?.period_scan_count, 1);
+    const noActivity = batched[0].rows.find(row => row.id === never.id)!;
+    assert.equal(noActivity.period_scanned, false);
+    assert.equal(noActivity.period_scan_count, 0);
+    assert.equal(noActivity.period_photo_count, 0);
+    assert.ok(batched.every(report => report.rows.every(row => !Object.hasOwn(row, 'evidence_image_url'))));
+    pass('batched reports match individual queries and count exact half-open daily activity without including future photos');
+
+    const monthly = await scanMonthlyReport(reportDate(base).slice(0, 7), sql);
+    const monthlyFirst = monthly.reports.find(report => report.startsAt === base.toISOString())!;
+    assert.ok(monthlyFirst);
+    assert.deepEqual(monthlyFirst, batched[0]);
+    assert.equal(monthlyFirst.rows.filter(row => row.id === a.id && row.period_scanned).length, 1);
+    assert.equal(monthlyFirst.rows.find(row => row.id === a.id)?.period_scan_count, 3);
+    assert.ok(monthly.reports.every(report => report.rows.length === new Set(report.rows.map(row => row.id)).size));
+    assert.ok(monthly.reports.every((report, index) => index === 0 || report.startsAt > monthly.reports[index - 1].startsAt));
+    assert.equal((await sql`select count(distinct scan_window_id)::int as count from ims_scans where inventory_item_id=${a.id}`)[0].count, 2);
+    pass('monthly reports count a repeatedly scanned unit once per day while retaining event totals and fixed barcode windows');
+
+    const archiveAnchor = at(-40 * DAY);
+    await sql`update ims_scan_report_settings set anchor_at=${archiveAnchor} where id=true`;
+    const archivedHistoryUnit = await item('MONTHLY-ARCHIVE-001', archiveAnchor);
+    await scan(archivedHistoryUnit, new Date(archiveAnchor.getTime() + 3_600_000), { evidenceImageUrl: 'data:image/jpeg;base64,archived-evidence' });
+    const archiveLatest = await scan(archivedHistoryUnit, new Date(archiveAnchor.getTime() + 2 * 3_600_000));
+    const archiveEnd = new Date(archiveAnchor.getTime() + DAY).toISOString();
+    await assert.rejects(scanChecklist(archiveEnd, sql), /REPORT_EXPIRED/);
+    const retainedDaily = await scanChecklist('current', sql);
+    assert.equal(retainedDaily.periods.length, 30);
+    assert.ok(retainedDaily.periods.every(period => period.endsAt !== archiveEnd));
+    const oldMonthly = await scanMonthlyReport(reportDate(archiveAnchor).slice(0, 7), sql);
+    const archivedReport = oldMonthly.reports.find(report => report.endsAt === archiveEnd)!;
+    assert.ok(archivedReport);
+    assert.equal(archivedReport.rows.length, 1, 'old reports must not fabricate items created later');
+    const archivedRow = archivedReport.rows[0];
+    assert.equal(archivedRow.id, archivedHistoryUnit.id);
+    assert.equal(archivedRow.period_scanned, true);
+    assert.equal(archivedRow.period_scan_count, 2);
+    assert.equal(archivedRow.period_photo_count, 1);
+    assert.equal(archivedRow.photo_count, 1);
+    assert.equal(archivedRow.scan_id, archiveLatest.scan.id);
+    assert.equal((await sql`select count(*)::int as count from ims_scans where inventory_item_id=${archivedHistoryUnit.id}`)[0].count, 2);
+    assert.equal((await scanEvidenceRows(sql, archiveLatest.scan.id)).filter(row => row.has_evidence).length, 1);
+    pass('daily reports expire after 30 closed days while monthly history, immutable scans, and photo evidence remain available');
 
     console.log(`\n${checks} PostgreSQL scan checks passed.`);
   } finally {

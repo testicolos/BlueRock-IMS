@@ -10,11 +10,13 @@
     "db:seed": "tsx scripts/seed-approved-inventory.ts",
     "test:scans": "tsx scripts/test-scan-windows.ts",
     "test:scan-access": "tsx scripts/test-scan-access.ts",
-    "test:navigation": "tsx scripts/test-view-navigation.ts"
+    "test:navigation": "tsx scripts/test-view-navigation.ts",
+    "test:report-xlsx": "tsx scripts/test-report-xlsx.ts"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",
     "bcryptjs": "3.0.2",
+    "exceljs": "^4.4.0",
     "jose": "6.1.0",
     "jsbarcode": "^3.12.3",
     "lucide-react": "^0.544.0",
@@ -23,6 +25,11 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "4.1.11"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   },
   "devDependencies": {
     "@types/jsbarcode": "^3.11.4",

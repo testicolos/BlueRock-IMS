@@ -1,0 +1,74 @@
+import { db } from '@/lib/db';
+import type { ReportPeriod } from '@/lib/scan-report-periods';
+
+type Timestamp = Date | string;
+export type ChecklistRow = {
+  id: string; barcode: string; name: string; inventory_type: 'TOOL' | 'SAMPLE';
+  location_name: string | null; status: 'SCANNED' | 'NOT_SCANNED';
+  scan_id: string | null; scanned_at: Timestamp | null;
+  window_started_at: Timestamp | null; window_expires_at: Timestamp | null;
+  scanner_name: string | null; condition: string | null; photo_count: number;
+  latitude: number | null; longitude: number | null; location_accuracy: number | null;
+  period_scan_count: number; period_scanned: boolean; period_photo_count: number;
+};
+export type ScanReport = ReportPeriod & { rows: ChecklistRow[] };
+
+export async function reportClock(sql: ReturnType<typeof db>) {
+  const [settings] = await sql`select anchor_at,clock_timestamp() as server_now from ims_scan_report_settings where id=true`;
+  return {now: new Date(settings.server_now).getTime(), anchor: new Date(settings.anchor_at).getTime()};
+}
+
+export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>): Promise<ScanReport[]> {
+  if (!periods.length) return [];
+  const contexts = periods.map(period => ({report_id: period.id, starts_at: period.startsAt,
+    ends_at: period.endsAt, as_of: period.asOf, is_current: period.current}));
+  // Batch all selected days in one query, avoiding a database round trip per day.
+  const rows = await sql<(ChecklistRow & {report_id: string})[]>`
+    with periods as (
+      select * from jsonb_to_recordset(${sql.json(contexts)}::jsonb)
+        as p(report_id text,starts_at timestamptz,ends_at timestamptz,as_of timestamptz,is_current boolean)
+    )
+    select p.report_id,i.id,i.barcode,i.name,i.inventory_type,l.name as location_name,
+      case when w.expires_at>p.as_of then 'SCANNED' else 'NOT_SCANNED' end as status,
+      s.id as scan_id,s.scanned_at,w.started_at as window_started_at,w.expires_at as window_expires_at,
+      u.full_name as scanner_name,s.condition,coalesce(photos.photo_count,0)::int as photo_count,
+      s.latitude,s.longitude,s.location_accuracy,
+      activity.period_scan_count,activity.period_scan_count>0 as period_scanned,activity.period_photo_count
+    from periods p cross join ims_inventory_items i
+    left join lateral (
+      select id,scanned_at,new_location_id,scanner_user_id,condition,scan_window_id,latitude,longitude,location_accuracy
+      from ims_scans where inventory_item_id=i.id and scanned_at<=p.as_of
+      order by scanned_at desc,created_at desc,id desc limit 1
+    ) s on true
+    left join ims_scan_windows w on w.id=s.scan_window_id
+    left join lateral (
+      select count(*)::int as photo_count from ims_scans
+      where scan_window_id=w.id and scanned_at<=s.scanned_at and nullif(evidence_image_url,'') is not null
+    ) photos on true
+    left join lateral (
+      select count(*)::int as period_scan_count,
+        count(*) filter(where nullif(evidence_image_url,'') is not null)::int as period_photo_count
+      from ims_scans where inventory_item_id=i.id and scanned_at>=p.starts_at
+        and scanned_at<p.ends_at and scanned_at<=p.as_of
+    ) activity on true
+    left join lateral (
+      select id,previous_location_id from ims_scans
+      where inventory_item_id=i.id and scanned_at>p.as_of
+      order by scanned_at,created_at,id limit 1
+    ) future on s.id is null
+    left join ims_locations l on l.id=case when s.id is not null then s.new_location_id
+      when future.id is not null then future.previous_location_id else i.current_location_id end
+    left join ims_users u on u.id=s.scanner_user_id
+    where i.created_at<=p.as_of
+      and (p.is_current and not i.archived
+        or not p.is_current and (i.archived_at is null or i.archived_at>p.as_of))
+    order by p.starts_at,i.name,i.barcode
+  `;
+  const groups = new Map<string, ChecklistRow[]>();
+  for (const {report_id, ...row} of rows) {
+    const group = groups.get(report_id) ?? [];
+    group.push(row);
+    groups.set(report_id, group);
+  }
+  return periods.map(period => ({...period, rows: groups.get(period.id) ?? []}));
+}

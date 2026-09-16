@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, ClipboardList, Clock3, RefreshCw, Search } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Clock3, Download, RefreshCw, Search } from 'lucide-react';
 
 import ScanEvidence from './scan-evidence';
 import styles from './scan-checklist.module.css';
@@ -22,10 +22,15 @@ type ChecklistRow = {
   photo_count: number;
 };
 
-type ReportPeriod = { id: string; endsAt: string };
+type ReportPeriod = { id: string; startsAt: string; endsAt: string; reportDate: string };
 type ChecklistResponse = {
   asOf: string;
   current: boolean;
+  startsAt: string;
+  endsAt: string;
+  reportDate: string;
+  retentionDays: number;
+  months: string[];
   nextReportAt: string;
   periods: ReportPeriod[];
   rows: ChecklistRow[];
@@ -37,7 +42,19 @@ function displayDate(value: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Not recorded';
   return date.toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Riyadh', timeZoneName: 'short',
+  });
+}
+
+function displayReportDate(value: string) {
+  return new Date(`${value}T00:00:00Z`).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
+  });
+}
+
+function displayMonth(value: string) {
+  return new Date(`${value}-01T00:00:00Z`).toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long', timeZone: 'UTC',
   });
 }
 
@@ -45,7 +62,7 @@ function displayCondition(value: string | null) {
   return value ? value.toLowerCase().replace(/_/g, ' ').replace(/^\w/, letter => letter.toUpperCase()) : 'Not recorded';
 }
 
-export default function ScanChecklist({ api }: { api: Api }) {
+export default function ScanChecklist({ api, download }: { api: Api; download: (url: string) => Promise<void> }) {
   const apiRef = useRef(api);
   const [period, setPeriod] = useState('current');
   const [periods, setPeriods] = useState<ReportPeriod[]>([]);
@@ -54,6 +71,9 @@ export default function ScanChecklist({ api }: { api: Api }) {
   const [status, setStatus] = useState<'ALL' | ChecklistRow['status']>('ALL');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [month, setMonth] = useState('');
+  const [exporting, setExporting] = useState<'daily' | 'monthly' | null>(null);
+  const [exportError, setExportError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
   const titleId = useId();
   const tableHintId = useId();
@@ -74,6 +94,7 @@ export default function ScanChecklist({ api }: { api: Api }) {
         if (!active) return;
         setData(result);
         setPeriods([...result.periods].sort((left, right) => new Date(right.endsAt).getTime() - new Date(left.endsAt).getTime()));
+        setMonth(previous => result.months.includes(previous) ? previous : result.months[0] || '');
       } catch (caught) {
         if (!active || controller.signal.aborted) return;
         setError(caught instanceof Error ? caught.message : 'Could not load the scan checklist.');
@@ -105,8 +126,23 @@ export default function ScanChecklist({ api }: { api: Api }) {
     if (next === period) return;
     setData(null);
     setError('');
+    setExportError('');
     setLoading(true);
     setPeriod(next);
+  }
+
+  async function exportReport(kind: 'daily' | 'monthly') {
+    if (loading || exporting || !data || (kind === 'monthly' && !month)) return;
+    setExporting(kind);
+    setExportError('');
+    try {
+      const selection = kind === 'daily' ? `period=${encodeURIComponent(period)}` : `month=${encodeURIComponent(month)}`;
+      await download(`/api/scans/checklist/export?${selection}`);
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : 'Could not download the Excel report. Please try again.');
+    } finally {
+      setExporting(null);
+    }
   }
 
   return <section className={styles.checklist} aria-labelledby={titleId}>
@@ -116,23 +152,43 @@ export default function ScanChecklist({ api }: { api: Api }) {
         <h2 id={titleId}>Scan checklist</h2>
         <p>Track every equipment and sample barcode, including units that still need a scan.</p>
       </div>
-      <button type="button" className={`secondary ${styles.refresh}`} disabled={loading} onClick={() => setRefreshKey(value => value + 1)}>
+      <button type="button" className={`secondary ${styles.refresh}`} disabled={loading || !!exporting} onClick={() => setRefreshKey(value => value + 1)}>
         <RefreshCw size={17} aria-hidden="true" />{loading ? 'Refreshing…' : 'Refresh'}
       </button>
     </header>
 
     <div className={styles.explanation}>
       <Clock3 size={21} aria-hidden="true" />
-      <div><strong>Each barcode has its own 24-hour scan window.</strong><p>The first scan starts its window. Further scans do not extend it. After 24 hours, that barcode needs a new scan. Reports are created automatically every 24 hours.</p></div>
+      <div><strong>Each barcode has its own 24-hour scan window.</strong><p>The first scan starts its window. Further scans do not extend it. After 24 hours, that barcode needs a new scan. Daily report history is available for {data?.retentionDays || 30} days, with a report created automatically every 24 hours.</p></div>
     </div>
 
+    <section className={styles.reportControls} aria-label="Report history and Excel exports">
+      <div className={styles.reportChoice}>
+        <label>Daily report history ({data?.retentionDays || 30} days)
+          <select value={period} disabled={loading || !!exporting} onChange={event => changePeriod(event.target.value)}>
+            <option value="current">Current checklist · in progress</option>
+            {periods.map(report => <option key={report.id} value={report.endsAt}>{displayReportDate(report.reportDate)} · ending {displayDate(report.endsAt)}</option>)}
+          </select>
+        </label>
+        <button type="button" className="primary" disabled={loading || !!exporting || !data} onClick={() => void exportReport('daily')}><Download size={17} aria-hidden="true" />{exporting === 'daily' ? 'Preparing daily Excel…' : 'Export daily Excel'}</button>
+        {data && <p className={styles.periodRange}>{displayDate(data.startsAt)} – {displayDate(data.endsAt)}{data.current && ' · in progress'}</p>}
+      </div>
+      <div className={styles.reportChoice}>
+        <label>Monthly results
+          <select value={month} disabled={loading || !!exporting || !data?.months.length} onChange={event => { setMonth(event.target.value); setExportError(''); }}>
+            {!data?.months.length && <option value="">No reports available</option>}
+            {data?.months.map(value => <option key={value} value={value}>{displayMonth(value)}</option>)}
+          </select>
+        </label>
+        <button type="button" className="secondary" disabled={loading || !!exporting || !data || !month} onClick={() => void exportReport('monthly')}><Download size={17} aria-hidden="true" />{exporting === 'monthly' ? 'Preparing monthly Excel…' : 'Export monthly Excel'}</button>
+        <p className={styles.periodRange}>Includes closed reports and the in-progress report, when applicable.</p>
+      </div>
+      <p className={styles.exportNote}>Excel exports include all units, regardless of the search and status filters below. Report dates and times use UTC+3. Daily and monthly reports are grouped by the reporting period’s start date.</p>
+      {exportError && <div className={styles.exportError} role="alert"><strong>Excel download failed.</strong> {exportError}</div>}
+      {exporting && <span className={styles.exportProgress} role="status">Preparing your {exporting} Excel report. The download will begin when it is ready.</span>}
+    </section>
+
     <div className={styles.filters}>
-      <label className={styles.period}>View report
-        <select value={period} onChange={event => changePeriod(event.target.value)}>
-          <option value="current">Current checklist</option>
-          {periods.map(report => <option key={report.id} value={report.endsAt}>Report ending {displayDate(report.endsAt)}</option>)}
-        </select>
-      </label>
       <label className={styles.search}>Find a barcode or material
         <span><Search size={17} aria-hidden="true" /><input type="search" placeholder="Barcode, material, location…" value={query} onChange={event => setQuery(event.target.value)} /></span>
       </label>

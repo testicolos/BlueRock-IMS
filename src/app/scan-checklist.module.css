@@ -10,7 +10,18 @@
 .explanation > div { min-width: 0; }
 .explanation strong { font-size: 13px; }
 .explanation p { margin: 5px 0 0; color: #765b46; font-size: 12px; line-height: 1.6; }
-.filters { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(150px, .7fr); gap: 13px; padding: 17px; margin-bottom: 18px; border: 1px solid #3c3e3c; border-radius: 12px; background: #252726; }
+.reportControls { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px 24px; padding: 20px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+.reportChoice { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.reportChoice label { width: 100%; min-width: 0; font-size: 12px; font-weight: 700; color: var(--ink); }
+.reportChoice select { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; font-size: 16px; background: #fffaf1; color: var(--ink); }
+.reportChoice button { min-height: 44px; max-width: 100%; white-space: normal; text-align: center; }
+.reportChoice button svg { flex: none; }
+.reportControls button:disabled, .reportControls select:disabled { opacity: .6; cursor: wait; }
+.periodRange { margin: 0; font-size: 11px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.exportNote { grid-column: 1 / -1; margin: 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.exportError { grid-column: 1 / -1; padding: 13px; border: 1px solid #edc0ae; border-radius: 8px; background: #fff0e8; color: #973a24; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.exportProgress { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); gap: 13px; padding: 17px; margin-bottom: 18px; border: 1px solid #3c3e3c; border-radius: 12px; background: #252726; }
 .filters label { min-width: 0; color: #ece6dc; font-size: 11px; }
 .filters input, .filters select { min-width: 0; max-width: 100%; min-height: 44px; font-size: 16px; color: var(--ink); background: #fffaf1; }
 .search > span { display: flex; align-items: center; min-width: 0; gap: 8px; background: #fffaf1; border: 1px solid #d5ccbd; border-radius: 8px; padding-left: 12px; color: #776e61; }
@@ -67,9 +78,9 @@
 .error small { display: block; line-height: 1.5; }
 .error button { flex: none; min-height: 44px; }
 
-@media (max-width: 1000px) {
-  .filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .period { grid-column: 1 / -1; }
+@media (max-width: 800px) {
+  .reportControls { grid-template-columns: minmax(0, 1fr); }
+  .reportChoice + .reportChoice { padding-top: 18px; border-top: 1px solid var(--line); }
 }
 
 @media (max-width: 560px) {
@@ -78,6 +89,8 @@
   .heading p { font-size: 13px; }
   .refresh { width: 100%; }
   .explanation { padding: 14px; gap: 10px; }
+  .reportControls { padding: 14px; }
+  .reportChoice button { width: 100%; }
   .filters { grid-template-columns: minmax(0, 1fr); padding: 14px; }
   .summary { gap: 8px; }
   .summary > div { display: block; padding: 13px 9px; }

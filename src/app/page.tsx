@@ -59,6 +59,24 @@ export default function Home(){
     setView(resolveView(window.location.search,me.role));setMobileNav(false);
   }
   const api:Api=async<T,>(url:string,options:RequestInit={})=>{const res=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...(options.headers||{})}});const body:ApiResult<T>=await res.json();if(!body.success)throw new Error(body.error?.message||'Request failed');return body.data};
+  async function download(url:string){
+    const response=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`}});
+    const contentType=response.headers.get('Content-Type')||'';
+    if(!response.ok||contentType.includes('application/json')){
+      const body=await response.json().catch(()=>null) as {error?:{message?:string}}|null;
+      throw new Error(body?.error?.message||'Unable to download the Excel report. Please try again.');
+    }
+    if(!contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))throw new Error('The server did not return an Excel file. Please try again.');
+    const blob=await response.blob();
+    if(!blob.size)throw new Error('The Excel report was empty. Please try again.');
+    const disposition=response.headers.get('Content-Disposition')||'';
+    const filename=disposition.match(/filename="?([A-Za-z0-9][A-Za-z0-9._-]*\.xlsx)"?(?:;|$)/i)?.[1]||'BlueRock-scan-report.xlsx';
+    const objectUrl=URL.createObjectURL(blob);
+    const anchor=document.createElement('a');
+    anchor.href=objectUrl;anchor.download=filename;anchor.style.display='none';
+    document.body.appendChild(anchor);
+    try{anchor.click()}finally{anchor.remove();window.setTimeout(()=>URL.revokeObjectURL(objectUrl),30_000)}
+  }
   async function loadAll(){
     if(!token||!me)return;
     setLoading(true);
@@ -95,7 +113,7 @@ export default function Home(){
         {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='users'&&me.role==='ADMIN'&&<Users rows={users} currentId={me.id} api={api} refresh={loadAll} notify={notify}/>}
         {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans} api={api} refresh={loadAll}/>}
-        {view==='checklist'&&isAdmin&&<ScanChecklist api={api}/>}
+        {view==='checklist'&&isAdmin&&<ScanChecklist api={api} download={download}/>}
       </>}
     </main>
   </div>
