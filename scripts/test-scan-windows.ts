@@ -8,8 +8,9 @@ import { scanWindowMigration } from '../src/lib/scan-windows';
 import { scanRecords } from '../src/lib/scan-records';
 import { scanChecklist, scanMonthlyReport } from '../src/lib/scan-checklist';
 import { scanEvidenceRows } from '../src/lib/scan-evidence';
-import { reportsAt } from '../src/lib/scan-report-data';
+import { reportClock, reportsAt } from '../src/lib/scan-report-data';
 import { reportDate, reportPeriod } from '../src/lib/scan-report-periods';
+import { buildDailyScanWorkbook, buildMonthlyScanWorkbook } from '../src/lib/scan-report-xlsx';
 
 // Explicit test connection only. All objects live in a fresh, private schema;
 // search_path excludes public and cleanup removes only this generated schema.
@@ -250,6 +251,62 @@ async function main() {
     assert.equal((await sql`select count(*)::int as count from ims_scans where inventory_item_id=${archivedHistoryUnit.id}`)[0].count, 2);
     assert.equal((await scanEvidenceRows(sql, archiveLatest.scan.id)).filter(row => row.has_evidence).length, 1);
     pass('daily reports expire after 30 closed days while monthly history, immutable scans, and photo evidence remain available');
+
+    const isoBaseline = await reportsAt(periods, sql);
+    const nonIso = postgres(url, { ...options, max: 1, idle_timeout: 1,
+      connection: {search_path: schemaName, DateStyle: 'SQL, DMY'} });
+    try {
+      const [dateStyle] = await nonIso`show datestyle`;
+      assert.equal(dateStyle.DateStyle, 'SQL, DMY');
+      const [unparseable] = await nonIso`select timestamptz '2026-09-17T00:00:00+00' as sample`;
+      assert.equal(Number.isFinite(new Date(unparseable.sample).getTime()), false,
+        'fixture must exercise a timestamp format rejected by the default Date parser');
+      const backendIds: number[] = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (attempt === 2) await new Promise(resolve => setTimeout(resolve, 1_500));
+        const [backend] = await nonIso`select pg_backend_pid() as id`;
+        backendIds.push(backend.id);
+        const before = Date.now();
+        const clock = await reportClock(nonIso);
+        const after = Date.now();
+        assert.equal(clock.anchor, archiveAnchor.getTime());
+        assert.ok(Number.isInteger(clock.now));
+        assert.ok(clock.now >= before - 1_000 && clock.now <= after + 1_000);
+        const warm = await scanChecklist('current', nonIso);
+        assert.equal(warm.current, true);
+        assert.ok(Number.isFinite(new Date(warm.asOf).getTime()));
+        assert.ok(Number.isFinite(new Date(warm.generatedAt).getTime()));
+        assert.equal(warm.periods.length, 30);
+        assert.equal(warm.rows.find(row => row.id === expired.id)?.status, 'NOT_SCANNED');
+        assert.equal(warm.rows.find(row => row.id === current.id)?.status, 'SCANNED');
+        assert.equal(warm.rows.find(row => row.id === never.id)?.status, 'NOT_SCANNED');
+        for (const row of warm.rows.filter(row => row.scan_id)) {
+          for (const value of [row.scanned_at, row.window_started_at, row.window_expires_at]) {
+            assert.equal(typeof value, 'string');
+            assert.match(value as string, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+            assert.ok(Number.isFinite(new Date(value as string).getTime()));
+          }
+        }
+        const noScan = warm.rows.find(row => row.id === never.id)!;
+        assert.equal(noScan.scanned_at, null);
+        assert.equal(noScan.window_started_at, null);
+        assert.equal(noScan.window_expires_at, null);
+        assert.deepEqual(await reportsAt(periods, nonIso), isoBaseline,
+          'historical rows, statuses, timestamps, and counts must not depend on connection DateStyle');
+        if (attempt === 2) {
+          const dailyBytes = await buildDailyScanWorkbook(warm).xlsx.writeBuffer();
+          const nonIsoMonthly = await scanMonthlyReport(reportDate(base).slice(0, 7), nonIso);
+          const monthlyBytes = await buildMonthlyScanWorkbook(nonIsoMonthly).xlsx.writeBuffer();
+          assert.ok(dailyBytes.byteLength > 5_000);
+          assert.ok(monthlyBytes.byteLength > 5_000);
+        }
+      }
+      assert.equal(backendIds[0], backendIds[1], 'second request must reuse the warm database connection');
+      assert.notEqual(backendIds[1], backendIds[2], 'third request must reconnect after the idle timeout');
+    } finally {
+      await nonIso.end({timeout: 5});
+    }
+    pass('report clock and ISO timestamps survive non-ISO formats, warm queries, and idle reconnection without changing statuses');
 
     console.log(`\n${checks} PostgreSQL scan checks passed.`);
   } finally {

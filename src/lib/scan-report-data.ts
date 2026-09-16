@@ -14,8 +14,20 @@ export type ChecklistRow = {
 export type ScanReport = ReportPeriod & { rows: ChecklistRow[] };
 
 export async function reportClock(sql: ReturnType<typeof db>) {
-  const [settings] = await sql`select anchor_at,clock_timestamp() as server_now from ims_scan_report_settings where id=true`;
-  return {now: new Date(settings.server_now).getTime(), anchor: new Date(settings.anchor_at).getTime()};
+  // PostgreSQL timestamp text depends on connection DateStyle. Numeric epochs
+  // remain stable across pooled connections and avoid the driver's Date parser.
+  const [settings] = await sql<{anchor_ms: number; now_ms: number}[]>`
+    select (extract(epoch from anchor_at)*1000)::double precision as anchor_ms,
+      (extract(epoch from clock_timestamp())*1000)::double precision as now_ms
+    from ims_scan_report_settings where id=true
+  `;
+  const anchor = Math.trunc(Number(settings?.anchor_ms));
+  const now = Math.trunc(Number(settings?.now_ms));
+  if (settings?.anchor_ms == null || settings?.now_ms == null
+    || !Number.isFinite(new Date(anchor).getTime()) || !Number.isFinite(new Date(now).getTime())) {
+    throw new Error('INVALID_REPORT_CLOCK');
+  }
+  return {now, anchor};
 }
 
 export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>): Promise<ScanReport[]> {
@@ -30,7 +42,10 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
     )
     select p.report_id,i.id,i.barcode,i.name,i.inventory_type,l.name as location_name,
       case when w.expires_at>p.as_of then 'SCANNED' else 'NOT_SCANNED' end as status,
-      s.id as scan_id,s.scanned_at,w.started_at as window_started_at,w.expires_at as window_expires_at,
+      s.id as scan_id,
+      to_char(s.scanned_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as scanned_at,
+      to_char(w.started_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as window_started_at,
+      to_char(w.expires_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as window_expires_at,
       u.full_name as scanner_name,s.condition,coalesce(photos.photo_count,0)::int as photo_count,
       s.latitude,s.longitude,s.location_accuracy,
       activity.period_scan_count,activity.period_scan_count>0 as period_scanned,activity.period_photo_count
