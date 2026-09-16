@@ -33,11 +33,27 @@ create table if not exists ims_categories (
   unique(name,inventory_type)
 );
 
+create table if not exists ims_materials (
+  id uuid primary key default gen_random_uuid(),
+  inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
+  name varchar(160) not null,
+  code varchar(12) not null unique,
+  image_url text,
+  image_source_url text,
+  description text,
+  active boolean not null default true,
+  created_by uuid references ims_users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists ims_inventory_items (
   id uuid primary key default gen_random_uuid(),
   barcode varchar(100) not null unique,
   inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
   name varchar(160) not null,
+  material_id uuid references ims_materials(id),
+  unit_number integer,
   description text,
   category_id uuid references ims_categories(id),
   manufacturer varchar(120),
@@ -75,12 +91,14 @@ create table if not exists ims_issues (
   reported_by uuid not null references ims_users(id),
   issue_type varchar(120) not null,
   description text not null,
+  image_url text,
   status varchar(20) not null check (status in ('OPEN','RESOLVED')) default 'OPEN',
   reported_at timestamptz not null default now(),
   resolved_by uuid references ims_users(id),
   resolution_note text,
   resolved_at timestamptz,
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  archived boolean not null default false
 );
 
 create table if not exists ims_audit_logs (
@@ -97,6 +115,7 @@ create table if not exists ims_audit_logs (
 create index if not exists idx_inventory_barcode on ims_inventory_items(barcode);
 create index if not exists idx_inventory_location on ims_inventory_items(current_location_id);
 create index if not exists idx_inventory_type on ims_inventory_items(inventory_type);
+create index if not exists idx_inventory_material on ims_inventory_items(material_id,unit_number);
 create index if not exists idx_scans_item_time on ims_scans(inventory_item_id,scanned_at desc);
 create index if not exists idx_scans_user_time on ims_scans(scanner_user_id,scanned_at desc);
 create index if not exists idx_issues_status on ims_issues(status,reported_at desc);

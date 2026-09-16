@@ -1,0 +1,30 @@
+import { db } from '@/lib/db';
+
+let ready: Promise<void> | null = null;
+
+export function ensureInventorySchema() {
+  if (!ready) ready = migrate().catch((error) => { ready = null; throw error; });
+  return ready;
+}
+
+async function migrate() {
+  const sql = db();
+  await sql`create table if not exists ims_materials (
+    id uuid primary key default gen_random_uuid(),
+    inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
+    name varchar(160) not null,
+    code varchar(12) not null unique,
+    image_url text,
+    image_source_url text,
+    description text,
+    active boolean not null default true,
+    created_by uuid references ims_users(id),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  )`;
+  await sql`alter table ims_inventory_items add column if not exists material_id uuid references ims_materials(id)`;
+  await sql`alter table ims_inventory_items add column if not exists unit_number integer`;
+  await sql`alter table ims_issues add column if not exists image_url text`;
+  await sql`alter table ims_issues add column if not exists archived boolean not null default false`;
+  await sql`create index if not exists idx_inventory_material on ims_inventory_items(material_id,unit_number)`;
+}
