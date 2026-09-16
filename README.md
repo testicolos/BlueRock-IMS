@@ -32,7 +32,9 @@ Both use one barcode/location movement engine and immutable scan history.
 - `GET/POST /api/inventory`
 - `GET/PATCH/DELETE /api/inventory/:id`
 - `GET/POST /api/scans`
-- `GET /api/scans/checklist?period=current` (admin only)
+- `GET /api/scan-sessions` (authenticated; active sessions only)
+- `POST/PATCH /api/scan-sessions` (admin only; start or close an equipment/sample session)
+- `GET /api/scans/checklist?inventoryType=TOOL|SAMPLE&period=current` (admin only; an active admin session is required)
 - `GET /api/scans/checklist/export?period=current` (admin-only daily Excel; a closed period's ISO end timestamp is also accepted)
 - `GET /api/scans/checklist/export?month=YYYY-MM` (admin-only monthly Excel)
 - `GET /api/scans/:id/evidence` (admin only)
@@ -54,7 +56,7 @@ Each barcode's first accepted scan starts a fixed 24-hour window, using server t
 
 Underlying scan events, locations, defects, GPS and photos remain immutable. Scan History shows the most recent 500 window records, while the per-item history retains individual movements. Admins can open all photos submitted up to the displayed scan in its window; scanners cannot access these reports or evidence endpoints. Image data is fetched only when opened, not included in scan list responses.
 
-The current checklist includes every unarchived tool/sample unit, even units never scanned, and refreshes every 60 seconds. Closed checklist snapshots become available every 24 hours from the reporting anchor (the earliest existing scan at migration, or installation time if there are no scans). These report times do not reset barcode windows. Snapshots are computed on demand from immutable events and inventory creation/archive times, so no browser session or scheduled job is needed. The selector retains the latest 30 closed reports, plus the current in-progress report. Older daily requests return HTTP 410; immutable scan history and photo evidence are not deleted. Historical names reflect current names; pre-migration archive times use the previously recorded update timestamp.
+An administrator starts an equipment or sample session from Overview before a current checklist can open. The current checklist then includes every unarchived unit in that domain, even units never scanned, and refreshes every 60 seconds. Closing the session prevents new scans and closes the current checklist; starting another session creates a fresh checklist while preserving history. Closed checklist snapshots become available every 24 hours from the reporting anchor (the earliest existing scan at migration, or installation time if there are no scans). These report times do not reset barcode windows. Snapshots are computed on demand from immutable events and inventory creation/archive times, so no browser session or scheduled job is needed. The selector retains the latest 30 closed reports, plus the current in-progress report. Older daily requests return HTTP 410; immutable scan history and photo evidence are not deleted. Historical names reflect current names; pre-migration archive times use the previously recorded update timestamp.
 
 ### Excel reports
 
