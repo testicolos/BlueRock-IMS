@@ -5,13 +5,16 @@ let client: ReturnType<typeof postgres> | undefined;
 export function db() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not configured');
+
   if (!client) {
     client = postgres(url, {
       ssl: 'require',
-      max: 5,
+      max: 1,
+      prepare: false,
       idle_timeout: 20,
       connect_timeout: 10,
     });
   }
+
   return client;
 }
