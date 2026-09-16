@@ -3,12 +3,14 @@ import type { NextRequest } from 'next/server';
 import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
+import { ensureInventorySchema } from '@/lib/inventory-schema';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
     const actor = await requireAuth(request);
+    await ensureInventorySchema();
     const sql = db();
 
     // Keep the initial application load on one database connection. The previous
@@ -20,6 +22,10 @@ export async function GET(request: NextRequest) {
       where active=true
       order by name
     `;
+
+    if (actor.role !== 'ADMIN') {
+      return ok({ locations, materials: [], users: [], scans: [], issues: [] });
+    }
 
     const materials = await sql`
       select m.*,
@@ -35,10 +41,6 @@ export async function GET(request: NextRequest) {
       group by m.id
       order by m.name
     `;
-
-    if (actor.role !== 'ADMIN') {
-      return ok({ locations, materials, users: [], scans: [], issues: [] });
-    }
 
     const users = await sql`
       select id,username,full_name,role,active,last_login_at,created_at,updated_at

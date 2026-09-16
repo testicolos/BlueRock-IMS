@@ -84,6 +84,28 @@ create table if not exists ims_scans (
   created_at timestamptz not null default now()
 );
 
+create table if not exists ims_scan_attempts (
+  id uuid primary key default gen_random_uuid(),
+  scanner_user_id uuid not null references ims_users(id),
+  inventory_item_id uuid references ims_inventory_items(id),
+  barcode varchar(100) not null,
+  matched boolean not null default false,
+  capture_method varchar(20) not null check (capture_method in ('CAMERA','MANUAL')),
+  latitude double precision not null,
+  longitude double precision not null,
+  location_accuracy double precision,
+  captured_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+alter table ims_scans add column if not exists validation_attempt_id uuid references ims_scan_attempts(id);
+alter table ims_scans add column if not exists capture_method varchar(20) check (capture_method in ('CAMERA','MANUAL'));
+alter table ims_scans add column if not exists latitude double precision;
+alter table ims_scans add column if not exists longitude double precision;
+alter table ims_scans add column if not exists location_accuracy double precision;
+alter table ims_scans add column if not exists captured_at timestamptz;
+alter table ims_scans add column if not exists evidence_image_url text;
+
 create table if not exists ims_issues (
   id uuid primary key default gen_random_uuid(),
   inventory_item_id uuid not null references ims_inventory_items(id),
@@ -118,4 +140,5 @@ create index if not exists idx_inventory_type on ims_inventory_items(inventory_t
 create index if not exists idx_inventory_material on ims_inventory_items(material_id,unit_number);
 create index if not exists idx_scans_item_time on ims_scans(inventory_item_id,scanned_at desc);
 create index if not exists idx_scans_user_time on ims_scans(scanner_user_id,scanned_at desc);
+create index if not exists idx_scan_attempts_user_time on ims_scan_attempts(scanner_user_id,created_at desc);
 create index if not exists idx_issues_status on ims_issues(status,reported_at desc);

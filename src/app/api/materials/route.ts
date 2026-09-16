@@ -19,7 +19,7 @@ const createSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    await requireAuth(request, ['ADMIN']);
     await ensureInventorySchema();
     const rows = await db()`select m.*,
       coalesce(jsonb_agg(jsonb_build_object(
