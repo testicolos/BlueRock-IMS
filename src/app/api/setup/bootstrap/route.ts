@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 
-const schema = z.object({ username: z.string().min(3).max(80), password: z.string().min(12).max(200), fullName: z.string().min(2).max(120) });
+const schema = z.object({ username: z.string().min(3).max(80), password: z.string().min(8).max(200), fullName: z.string().min(2).max(120) });
 
 export async function POST(request: Request) {
   try {
