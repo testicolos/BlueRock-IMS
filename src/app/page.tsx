@@ -17,6 +17,7 @@ type Issue={id:string;inventory_item_id:string;barcode:string;name:string;invent
 type ApiResult<T>={success:boolean;data:T;error?:{message:string}};
 type Api=<T>(url:string,options?:RequestInit)=>Promise<T>;
 type View='dashboard'|'materials'|'locations'|'scanner'|'issues'|'users'|'scans';
+type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[]};
 
 const adminNav:[View,string,typeof CircleGauge][]=[
   ['dashboard','Overview',CircleGauge],['materials','Materials & Units',Boxes],['locations','Locations',MapPin],
@@ -28,16 +29,17 @@ const statuses=['ACTIVE','INACTIVE','MAINTENANCE','LOST','RETIRED'];
 export default function Home(){
   const[token,setToken]=useState(''); const[me,setMe]=useState<User|null>(null); const[view,setView]=useState<View>('dashboard');
   const[locations,setLocations]=useState<Location[]>([]); const[materials,setMaterials]=useState<Material[]>([]); const[users,setUsers]=useState<User[]>([]);
-  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false);
+  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false);
 
   useEffect(()=>{const savedToken=localStorage.getItem('br_token');const savedUser=localStorage.getItem('br_user');if(savedToken&&savedUser){setToken(savedToken);setMe(JSON.parse(savedUser))}},[]);
   const api:Api=async<T,>(url:string,options:RequestInit={})=>{const res=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...(options.headers||{})}});const body:ApiResult<T>=await res.json();if(!body.success)throw new Error(body.error?.message||'Request failed');return body.data};
   async function loadAll(){
     if(!token||!me)return;
+    setLoading(true);
     try{
-      const base=await Promise.all([api<Location[]>('/api/locations'),api<Material[]>('/api/materials')]); setLocations(base[0]);setMaterials(base[1]);
-      if(me.role==='ADMIN'){const admin=await Promise.all([api<User[]>('/api/users'),api<Scan[]>('/api/scans'),api<Issue[]>('/api/issues')]);setUsers(admin[0]);setScans(admin[1]);setIssues(admin[2])}
-    }catch(error){setMessage(error instanceof Error?error.message:'Unable to load data')}
+      const data=await api<AppData>('/api/app-data');
+      setLocations(data.locations);setMaterials(data.materials);setUsers(data.users);setScans(data.scans);setIssues(data.issues);
+    }catch(error){setMessage(error instanceof Error?error.message:'Unable to load data')}finally{setLoading(false)}
   }
   useEffect(()=>{void loadAll()},[token,me?.id]);
   function logout(){localStorage.removeItem('br_token');localStorage.removeItem('br_user');setToken('');setMe(null)}
@@ -57,16 +59,20 @@ export default function Home(){
     <main className="mainArea">
       <header className="topbar"><button className="mobileMenu" onClick={()=>setMobileNav(true)}><Menu/></button><div><span className="eyebrow">BLUE ROCK / INVENTORY</span><h1>{nav.find(item=>item[0]===view)?.[1]||'Inventory'}</h1></div><div className="systemPill"><span/>System online</div></header>
       {message&&<button className="notice" onClick={()=>setMessage('')}>{message}</button>}
-      {view==='dashboard'&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans}/>}
-      {view==='materials'&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
-      {view==='locations'&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
-      {view==='scanner'&&<Scanner locations={locations} api={api} refresh={loadAll} notify={notify}/>}
-      {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
-      {view==='users'&&me.role==='ADMIN'&&<Users rows={users} currentId={me.id} api={api} refresh={loadAll} notify={notify}/>}
-      {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans}/>}
+      {loading?<DataLoading/>:<>
+        {view==='dashboard'&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans}/>}
+        {view==='materials'&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='locations'&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='scanner'&&<Scanner locations={locations} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='users'&&me.role==='ADMIN'&&<Users rows={users} currentId={me.id} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans}/>}
+      </>}
     </main>
   </div>
 }
+
+function DataLoading(){return <section className="dataLoading"><div className="loadingMark"><span/><span/><span/></div><span className="eyebrow">BLUE ROCK INVENTORY</span><h2>Loading your equipment</h2><p>Bringing materials, locations and barcode records together.</p></section>}
 
 function Login({onLogin}:{onLogin:(token:string,user:User)=>void}){
   const[username,setUsername]=useState('');const[password,setPassword]=useState('');const[error,setError]=useState('');const[busy,setBusy]=useState(false);
