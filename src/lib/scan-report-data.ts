@@ -32,7 +32,7 @@ export async function reportClock(sql: ReturnType<typeof db>) {
   return {now, anchor};
 }
 
-export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>, inventoryType: ReportInventoryType = 'ALL'): Promise<ScanReport[]> {
+export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof db>, inventoryType: ReportInventoryType = 'ALL', sessionId: string | null = null): Promise<ScanReport[]> {
   if (!periods.length) return [];
   const contexts = periods.map(period => ({report_id: period.id, starts_at: period.startsAt,
     ends_at: period.endsAt, as_of: period.asOf, is_current: period.current}));
@@ -57,22 +57,26 @@ export async function reportsAt(periods: ReportPeriod[], sql: ReturnType<typeof 
     left join lateral (
       select id,scanned_at,new_location_id,scanner_user_id,condition,scan_window_id,latitude,longitude,location_accuracy
       from ims_scans where inventory_item_id=i.id and scanned_at<=p.as_of
+        and (${sessionId}::uuid is null or session_id=${sessionId})
       order by scanned_at desc,created_at desc,id desc limit 1
     ) s on true
     left join ims_scan_windows w on w.id=s.scan_window_id
     left join lateral (
       select count(*)::int as photo_count from ims_scans
       where scan_window_id=w.id and scanned_at<=s.scanned_at and nullif(evidence_image_url,'') is not null
+        and (${sessionId}::uuid is null or session_id=${sessionId})
     ) photos on true
     left join lateral (
       select count(*)::int as period_scan_count,
         count(*) filter(where nullif(evidence_image_url,'') is not null)::int as period_photo_count
       from ims_scans where inventory_item_id=i.id and scanned_at>=p.starts_at
         and scanned_at<p.ends_at and scanned_at<=p.as_of
+        and (${sessionId}::uuid is null or session_id=${sessionId})
     ) activity on true
     left join lateral (
       select id,previous_location_id from ims_scans
       where inventory_item_id=i.id and scanned_at>p.as_of
+        and (${sessionId}::uuid is null or session_id=${sessionId})
       order by scanned_at,created_at,id limit 1
     ) future on s.id is null
     left join ims_locations l on l.id=case when s.id is not null then s.new_location_id

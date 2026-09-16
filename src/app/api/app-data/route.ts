@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
 import { scanRecords } from '@/lib/scan-records';
+import { activeScanSessions } from '@/lib/scan-sessions';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,9 +24,10 @@ export async function GET(request: NextRequest) {
       where active=true
       order by name
     `;
+    const scanSessions = await activeScanSessions(sql);
 
     if (actor.role !== 'ADMIN') {
-      return ok({ locations, materials: [], users: [], scans: [], issues: [] });
+      return ok({ locations, materials: [], users: [], scans: [], issues: [], scanSessions });
     }
 
     const materials = await sql`
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
       order by x.reported_at desc
     `;
 
-    return ok({ locations, materials, users, scans, issues });
+    return ok({ locations, materials, users, scans, issues, scanSessions });
   } catch (error) {
     const auth = authFailure(error);
     return auth ? fail(auth.message, auth.status) : serverError(error);

@@ -207,7 +207,7 @@ export default function ScanChecklist({ api, download, inventoryType }: { api: A
       </label>
     </div>
 
-    {error && <div className={styles.error} role="alert"><div><strong>Checklist could not be refreshed.</strong><p>{error}</p>{data && <small>Showing the last successful result from {displayDate(data.asOf)}. Statuses may have changed.</small>}</div><button type="button" className="secondary" disabled={loading} onClick={() => setRefreshKey(value => value + 1)}>Retry</button></div>}
+    {error && <div className={styles.error} role="alert"><div><strong>{error.toLowerCase().includes('start a scan session') ? 'No active scan session.' : 'Checklist could not be refreshed.'}</strong><p>{error}</p>{data && <small>Showing the last successful result from {displayDate(data.asOf)}. Statuses may have changed.</small>}</div><button type="button" className="secondary" disabled={loading} onClick={() => setRefreshKey(value => value + 1)}>Retry</button></div>}
 
     {!data && loading && <div className={styles.message} role="status"><ClipboardList size={30} aria-hidden="true" /><strong>Loading barcode checklist…</strong><p>Checking scan status for every unit.</p></div>}
 

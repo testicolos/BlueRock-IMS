@@ -6,6 +6,7 @@ import { ensureInventorySchema } from '@/lib/inventory-schema';
 import { scanChecklist, scanMonthlyReport } from '@/lib/scan-checklist';
 import { buildDailyScanWorkbook, buildMonthlyScanWorkbook } from '@/lib/scan-report-xlsx';
 import { reportInventoryType, reportScopeLabel } from '@/lib/scan-report-scope';
+import { activeScanSession } from '@/lib/scan-sessions';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -38,7 +39,10 @@ export async function GET(request: NextRequest) {
       workbook = buildMonthlyScanWorkbook(await scanMonthlyReport(month, undefined, inventoryType));
       filename = `BlueRock-${scopeLabel}-Monthly-${month}.xlsx`;
     } else {
-      const report = await scanChecklist(period, undefined, inventoryType);
+      const isCurrent = !period || period === 'current';
+      const session = isCurrent && inventoryType !== 'ALL' ? await activeScanSession(inventoryType) : null;
+      if (isCurrent && inventoryType !== 'ALL' && !session) return exportFailure('An administrator must start a scan session before exporting this checklist.', 409);
+      const report = await scanChecklist(period, undefined, inventoryType, session?.id ?? null);
       workbook = buildDailyScanWorkbook(report);
       filename = `BlueRock-${scopeLabel}-Daily-${report.reportDate}${report.current ? '-provisional' : ''}.xlsx`;
     }

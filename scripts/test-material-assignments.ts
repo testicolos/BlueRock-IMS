@@ -143,7 +143,7 @@ async function testMigration(url: string) {
     assert.equal((await sql`show statement_timeout`)[0].statement_timeout, '0');
     assert.equal((await sql`show idle_in_transaction_session_timeout`)[0].idle_in_transaction_session_timeout, '0');
     await migrateInventorySchema(sql);
-    assert.equal((await sql`select count(*)::int as count from ims_schema_migrations`)[0].count, 2);
+    assert.equal((await sql`select count(*)::int as count from ims_schema_migrations`)[0].count, 3);
     assert.deepEqual((await sql`select * from ims_scans where id=${scan.id}`)[0], before);
     console.log('PASS: contended DDL rolls back within the lock timeout, leaves no session settings, and safely retries after release');
 
@@ -152,7 +152,7 @@ async function testMigration(url: string) {
     assert.equal((await fresh`select current_schema() as name`)[0].name, freshSchemaName);
     assert.equal((await fresh`select to_regclass('ims_schema_migrations') as registry`)[0].registry, null);
     await migrateInventorySchema(fresh);
-    assert.equal((await fresh`select count(*)::int as count from ims_schema_migrations`)[0].count, 2);
+    assert.equal((await fresh`select count(*)::int as count from ims_schema_migrations`)[0].count, 3);
     assert.equal((await fresh`select count(*)::int as count from information_schema.columns where table_schema=${freshSchemaName} and table_name='ims_materials' and column_name in ('customer_name','employee_name')`)[0].count, 2);
     assert.equal((await fresh`select relrowsecurity from pg_class where oid='ims_schema_migrations'::regclass`)[0].relrowsecurity, true);
     console.log('PASS: missing-registry fresh schema migrates both versions using its own search_path, without relying on public');

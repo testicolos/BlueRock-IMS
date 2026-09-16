@@ -5,6 +5,7 @@ import type { Sql, TransactionSql } from 'postgres';
 let ready: Promise<void> | null = null;
 const rollingVersion = '2026-09-17-rolling-scans-v1';
 const sampleVersion = '2026-09-17-sample-assignments-v1';
+const scanSessionVersion = '2026-09-17-scan-sessions-v1';
 
 export function ensureInventorySchema() {
   if (!ready) ready = migrateInventorySchema(db()).catch((error) => { ready = null; throw error; });
@@ -19,8 +20,8 @@ async function migrationsApplied(database: Sql | TransactionSql) {
   const [registry] = await database`select to_regclass('ims_schema_migrations') is not null as exists`;
   if (registry.exists) {
     const applied = await database`select version from ims_schema_migrations
-      where version in (${rollingVersion},${sampleVersion})`;
-    if (applied.length === 2) return true;
+      where version in (${rollingVersion},${sampleVersion},${scanSessionVersion})`;
+    if (applied.length === 3) return true;
   }
   return false;
 }
@@ -115,6 +116,34 @@ export async function migrateInventorySchema(database: ReturnType<typeof db>) {
       end loop;
     end $$`;
     await sql`insert into ims_schema_migrations(version) values(${sampleVersion})`;
+  }
+
+  if (!(await sql`select version from ims_schema_migrations where version=${scanSessionVersion}`).length) {
+    await sql`create table if not exists ims_scan_sessions (
+      id uuid primary key default gen_random_uuid(),
+      inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
+      status varchar(20) not null check (status in ('OPEN','CLOSED')) default 'OPEN',
+      started_by uuid not null references ims_users(id),
+      started_at timestamptz not null default now(),
+      closed_by uuid references ims_users(id),
+      closed_at timestamptz,
+      check ((status='OPEN' and closed_at is null) or (status='CLOSED' and closed_at is not null))
+    )`;
+    await sql`create unique index if not exists idx_scan_sessions_one_open_type
+      on ims_scan_sessions(inventory_type) where status='OPEN'`;
+    await sql`alter table ims_scans add column if not exists session_id uuid references ims_scan_sessions(id)`;
+    await sql`create index if not exists idx_scan_sessions_type_status on ims_scan_sessions(inventory_type,status,started_at desc)`;
+    await sql`create index if not exists idx_scans_session on ims_scans(session_id,scanned_at desc)`;
+    await sql`alter table ims_scan_sessions enable row level security`;
+    await sql`revoke all on ims_scan_sessions from public`;
+    await sql`do $$ declare role_name text; begin
+      foreach role_name in array array['anon','authenticated'] loop
+        if exists(select 1 from pg_roles where rolname=role_name) then
+          execute format('revoke all on ims_scan_sessions from %I',role_name);
+        end if;
+      end loop;
+    end $$`;
+    await sql`insert into ims_schema_migrations(version) values(${scanSessionVersion})`;
   }
   });
 }

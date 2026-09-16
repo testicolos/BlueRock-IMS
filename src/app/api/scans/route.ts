@@ -25,6 +25,7 @@ const schema = z.object({
   locationAccuracy: z.number().nonnegative().max(100_000).optional(),
   capturedAt: z.string().datetime(),
   clientTransactionId: z.string().uuid().optional(),
+  sessionId: z.string().uuid(),
 });
 
 export async function GET(request: NextRequest) {
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === 'INVALID_VALIDATION') return fail('Scan validation expired or does not match', 409);
     if (error instanceof Error && error.message === 'ITEM_NOT_FOUND') return fail('Item not found', 404);
     if (error instanceof Error && error.message === 'LOCATION_NOT_FOUND') return fail('Location not found or inactive', 404);
+    if (error instanceof Error && error.message === 'SCAN_SESSION_REQUIRED') return fail('This scan session is no longer active. Ask an administrator to start a new session.', 409);
     return serverError(error);
   }
 }

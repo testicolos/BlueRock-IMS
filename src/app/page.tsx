@@ -5,7 +5,7 @@ import { BrowserMultiFormatReader, type IScannerControls } from '@zxing/browser'
 import {
   AlertTriangle, Archive, Barcode, Boxes, Camera, CheckCircle2, ChevronDown, ChevronRight, CircleGauge,
   Download, Edit3, History, ImagePlus, Keyboard, LocateFixed, LogOut, MapPin, Menu, PackageCheck,
-  Plus, Printer, RefreshCw, ScanLine, Search, ShieldCheck, Smartphone, Trash2, UsersRound, X,
+  Plus, Printer, RefreshCw, ScanLine, Search, ShieldCheck, Smartphone, Trash2, UsersRound, X, PlayCircle, Square,
 } from 'lucide-react';
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import ScanEvidence from './scan-evidence';
@@ -24,7 +24,8 @@ type ScanMatch={id:string;barcode:string;name:string;inventoryType:string;condit
 type ValidationResult={matched:boolean;attemptId:string;item:ScanMatch|null};
 type ApiResult<T>={success:boolean;data:T;error?:{message:string}};
 type Api=<T>(url:string,options?:RequestInit)=>Promise<T>;
-type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[]};
+type ScanSession={id:string;inventory_type:'TOOL'|'SAMPLE';status:'OPEN'|'CLOSED';started_by:string;started_by_name?:string|null;started_at:string;closed_by?:string|null;closed_at?:string|null};
+type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[];scanSessions:ScanSession[]};
 
 const adminNav:[View,string,typeof CircleGauge][]=[
   ['dashboard','Overview',CircleGauge],['materials','Materials & Units',Boxes],['locations','Locations',MapPin],
@@ -36,7 +37,7 @@ const statuses=['ACTIVE','INACTIVE','MAINTENANCE','LOST','RETIRED'];
 export default function Home(){
   const[token,setToken]=useState(''); const[me,setMe]=useState<User|null>(null); const[view,setView]=useState<View>('dashboard');
   const[locations,setLocations]=useState<Location[]>([]); const[materials,setMaterials]=useState<Material[]>([]); const[users,setUsers]=useState<User[]>([]);
-  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false);
+  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[scanSessions,setScanSessions]=useState<ScanSession[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false);
 
   useEffect(()=>{const savedToken=localStorage.getItem('br_token');const savedUser=localStorage.getItem('br_user');if(savedToken&&savedUser){const user:User=JSON.parse(savedUser);setView(resolveView(window.location.search,user.role));setToken(savedToken);setMe(user)}},[]);
   useEffect(()=>{if('serviceWorker' in navigator)void navigator.serviceWorker.register('/sw.js')},[]);
@@ -83,7 +84,7 @@ export default function Home(){
     setLoading(true);
     try{
       const data=await api<AppData>('/api/app-data');
-      setLocations(data.locations);setMaterials(data.materials);setUsers(data.users);setScans(data.scans);setIssues(data.issues);
+      setLocations(data.locations);setMaterials(data.materials);setUsers(data.users);setScans(data.scans);setIssues(data.issues);setScanSessions(data.scanSessions||[]);
     }catch(error){setMessage(error instanceof Error?error.message:'Unable to load data')}finally{setLoading(false)}
   }
   useEffect(()=>{void loadAll()},[token,me?.id]);
@@ -107,10 +108,10 @@ export default function Home(){
       <header className="topbar"><button type="button" className="mobileMenu" aria-label="Open navigation" aria-expanded={mobileNav} aria-controls="main-navigation" onClick={()=>setMobileNav(true)}><Menu/></button><div><span className="eyebrow">BLUE ROCK / INVENTORY</span><h1>{nav.find(item=>item[0]===view)?.[1]||'Inventory'}</h1></div><div className="topbarActions"><InstallApp/><div className="systemPill"><span/>System online</div></div></header>
       {message&&<button className="notice" onClick={()=>setMessage('')}>{message}</button>}
       {loading?<DataLoading/>:<>
-        {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans} api={api}/>}
+        {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans} scanSessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
         {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
         {view==='locations'&&isAdmin&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
-        {view==='scanner'&&<Scanner locations={locations} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='scanner'&&<Scanner locations={locations} sessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
         {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='users'&&me.role==='ADMIN'&&<Users rows={users} currentId={me.id} api={api} refresh={loadAll} notify={notify}/>}
         {view==='scans'&&me.role==='ADMIN'&&<Scans rows={scans} api={api} refresh={loadAll}/>}
@@ -145,9 +146,22 @@ function Login({onLogin}:{onLogin:(token:string,user:User)=>void}){
   return <main className="loginPage"><section className="loginIntro"><div className="brandMark large"><span/></div><p>BLUE ROCK</p><h1>Every asset.<br/>Every movement.<br/><em>Accounted for.</em></h1><small>Tools, equipment and display sample control for stronger operations.</small></section><section className="loginPanel"><form onSubmit={submit}><span className="eyebrow">SECURE ACCESS</span><h2>Welcome back</h2><p>Sign in to BlueRock Inventory Management.</p><label>Username<input value={username} onChange={e=>setUsername(e.target.value)} autoComplete="username" required/></label><label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" required/></label>{error&&<div className="error">{error}</div>}<button className="primary" disabled={busy}>{busy?'Signing in…':'Sign in'} <ChevronRight size={17}/></button><small className="secure"><ShieldCheck size={14}/> Authorized personnel only</small></form></section></main>
 }
 
-function Dashboard({materials,issues,locations,scans,api}:{materials:Material[];issues:Issue[];locations:Location[];scans:Scan[];api:Api}){
+function Dashboard({materials,issues,locations,scans,scanSessions,api,refresh,notify}:{materials:Material[];issues:Issue[];locations:Location[];scans:Scan[];scanSessions:ScanSession[];api:Api;refresh:()=>Promise<void>;notify:(message:string)=>void}){
   const units=materials.flatMap(m=>m.units);const defective=units.filter(unit=>unit.condition!=='GOOD').length;
-  return <><section className="stats"><Stat icon={<PackageCheck/>} label="Total Units" value={units.length} note="Individually barcoded"/><Stat icon={<Boxes/>} label="Material Types" value={materials.length} note="Grouped inventory"/><Stat icon={<AlertTriangle/>} label="Open Defects" value={issues.length} note={issues.length?'Needs attention':'All clear'} alert={issues.length>0}/><Stat icon={<MapPin/>} label="Locations" value={locations.length} note={`${defective} units need review`}/></section><section className="dashboardGrid"><div className="panel"><PanelHead title="Inventory by material" subtitle="Largest material groups"/><div className="materialSummary">{[...materials].sort((a,b)=>b.units.length-a.units.length).slice(0,6).map(material=><div key={material.id}><img src={material.image_url||'/materials/scaffolding.jpg'} alt=""/><div><strong>{material.name}</strong><small>{barcodeRange(material)}</small></div><b>{material.units.length}</b></div>)}</div></div><div className="panel"><PanelHead title="Recent movement" subtitle="Latest scan activity"/><ScanTable rows={scans.slice(0,7)} api={api}/></div></section></>
+  return <><section className="pageHero"><div><span className="eyebrow">SCAN CONTROL</span><h2>Start a scan session</h2><p>Choose what scanners should inspect. A checklist is created only after you start one.</p></div><ScanSessionControls sessions={scanSessions} api={api} refresh={refresh} notify={notify}/></section><section className="stats"><Stat icon={<PackageCheck/>} label="Total Units" value={units.length} note="Individually barcoded"/><Stat icon={<Boxes/>} label="Material Types" value={materials.length} note="Grouped inventory"/><Stat icon={<AlertTriangle/>} label="Open Defects" value={issues.length} note={issues.length?'Needs attention':'All clear'} alert={issues.length>0}/><Stat icon={<MapPin/>} label="Locations" value={locations.length} note={`${defective} units need review`}/></section><section className="dashboardGrid"><div className="panel"><PanelHead title="Inventory by material" subtitle="Largest material groups"/><div className="materialSummary">{[...materials].sort((a,b)=>b.units.length-a.units.length).slice(0,6).map(material=><div key={material.id}><img src={material.image_url||'/materials/scaffolding.jpg'} alt=""/><div><strong>{material.name}</strong><small>{barcodeRange(material)}</small></div><b>{material.units.length}</b></div>)}</div></div><div className="panel"><PanelHead title="Recent movement" subtitle="Latest scan activity"/><ScanTable rows={scans.slice(0,7)} api={api}/></div></section></>
+}
+
+function ScanSessionControls({sessions,api,refresh,notify}:{sessions:ScanSession[];api:Api;refresh:()=>Promise<void>;notify:(message:string)=>void}){
+  const[busy,setBusy]=useState<'TOOL'|'SAMPLE'|null>(null);
+  async function start(inventoryType:'TOOL'|'SAMPLE'){
+    setBusy(inventoryType);
+    try{const result=await api<{session:ScanSession;created:boolean}>('/api/scan-sessions',{method:'POST',body:JSON.stringify({inventoryType})});notify(result.created?`${inventoryType==='TOOL'?'Equipment':'Sample'} scan session started`:`${inventoryType==='TOOL'?'Equipment':'Sample'} scan session is already active`);await refresh()}catch(reason){notify(reason instanceof Error?reason.message:'Unable to start scan session')}finally{setBusy(null)}
+  }
+  async function close(session:ScanSession){
+    try{await api('/api/scan-sessions',{method:'PATCH',body:JSON.stringify({id:session.id,action:'close'})});notify(`${session.inventory_type==='TOOL'?'Equipment':'Sample'} scan session closed`);await refresh()}catch(reason){notify(reason instanceof Error?reason.message:'Unable to close scan session')}
+  }
+  const active=(type:'TOOL'|'SAMPLE')=>sessions.find(session=>session.inventory_type===type);
+  return <div className="scanSessionControls"><div className="scanSessionButtons"><button type="button" className="primary" disabled={busy!==null||Boolean(active('TOOL'))} onClick={()=>void start('TOOL')}><PlayCircle size={18}/>{busy==='TOOL'?'Starting…':active('TOOL')?'Equipment scan active':'Scan equipments'}</button><button type="button" className="secondary" disabled={busy!==null||Boolean(active('SAMPLE'))} onClick={()=>void start('SAMPLE')}><PlayCircle size={18}/>{busy==='SAMPLE'?'Starting…':active('SAMPLE')?'Sample scan active':'Scan samples'}</button></div>{sessions.length>0&&<div className="activeSessions">{sessions.map(session=><div key={session.id}><span><i/>{session.inventory_type==='TOOL'?'Equipment':'Samples'} active · started {formatDate(session.started_at)}</span><button type="button" title="End scan session" onClick={()=>void close(session)}><Square size={13}/> End</button></div>)}</div>}</div>
 }
 function Stat({icon,label,value,note,alert}:{icon:ReactNode;label:string;value:number;note:string;alert?:boolean}){return <div className={`stat ${alert?'alert':''}`}><div className="statIcon">{icon}</div><div><small>{label}</small><strong>{value.toLocaleString()}</strong><span>{note}</span></div></div>}
 
@@ -276,7 +290,7 @@ function Issues({rows,units,api,refresh,notify}:{rows:Issue[];units:Unit[];api:A
 
 function IssueForm({row,units,api,close,done}:{row:Issue|null;units:Unit[];api:Api;close:()=>void;done:()=>void}){const[form,setForm]=useState({inventoryItemId:row?.inventory_item_id||units[0]?.id||'',issueType:row?.issue_type||'Damaged equipment',description:row?.description||'',imageUrl:row?.image_url||''});const[error,setError]=useState('');async function file(event:React.ChangeEvent<HTMLInputElement>){const selected=event.target.files?.[0];if(!selected)return;if(selected.size>2_500_000){setError('Image must be smaller than 2.5 MB');return}setForm({...form,imageUrl:await fileData(selected)})}async function submit(event:FormEvent){event.preventDefault();try{await api(row?`/api/issues/${row.id}`:'/api/issues',{method:row?'PATCH':'POST',body:JSON.stringify(row?{issueType:form.issueType,description:form.description,imageUrl:form.imageUrl}:{action:'create',...form})});done()}catch(reason){setError(reason instanceof Error?reason.message:'Unable to save defect')}}return <Modal title={row?'Edit defect':'Report defect'} subtitle="Attach clear photo evidence when available." close={close}><form className="formGrid" onSubmit={submit}>{!row&&<label className="full">Barcode unit<select value={form.inventoryItemId} onChange={e=>setForm({...form,inventoryItemId:e.target.value})}>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.barcode} · {unit.name} · {unit.location_name}</option>)}</select></label>}<label className="full">Issue type<input required value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="full">Description<textarea required value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label><label className="upload full"><ImagePlus/><span>{form.imageUrl?'Replace defect photo':'Upload defect photo'}<small>JPG, PNG or WEBP · maximum 2.5 MB</small></span><input type="file" accept="image/*" onChange={file}/></label>{form.imageUrl&&<img className="uploadPreview full" src={form.imageUrl} alt="Defect preview"/>}{error&&<div className="error full">{error}</div>}<FormActions close={close} label="Save defect"/></form></Modal>}
 
-function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){
+function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];sessions:ScanSession[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){
   const videoRef=useRef<HTMLVideoElement>(null);
   const controlsRef=useRef<IScannerControls|null>(null);
   const streamRef=useRef<MediaStream|null>(null);
@@ -299,6 +313,14 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
   const[busy,setBusy]=useState(false);
   const[submitting,setSubmitting]=useState(false);
   const[error,setError]=useState('');
+  const[selectedSessionId,setSelectedSessionId]=useState('');
+  const selectedSession=sessions.find(session=>session.id===selectedSessionId)||sessions[0];
+
+  useEffect(()=>{
+    if(!sessions.length){setSelectedSessionId('');return}
+    if(!sessions.some(session=>session.id===selectedSessionId))setSelectedSessionId(sessions[0].id);
+  },[sessions,selectedSessionId]);
+  useEffect(()=>{if(selectedSessionId)resetScan()},[selectedSessionId]);
 
   useEffect(()=>{if(!form.locationId&&locations[0])setForm(current=>({...current,locationId:locations[0].id}))},[locations,form.locationId]);
   useEffect(()=>()=>{cameraSessionRef.current++;scanRevisionRef.current++;validationAbortRef.current?.abort();controlsRef.current?.stop();streamRef.current?.getTracks().forEach(track=>track.stop())},[]);
@@ -328,7 +350,8 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
       const position=await currentPosition();
       if(controller.signal.aborted)throw new Error('Barcode matching timed out. Please try again.');
       const stamp=geoFromPosition(position);
-      const result=await api<ValidationResult>('/api/scans/validate',{method:'POST',signal:controller.signal,body:JSON.stringify({barcode:normalized,captureMethod,...stamp})});
+      if(!selectedSession){setError('An administrator must start a scan session first.');return}
+      const result=await api<ValidationResult>('/api/scans/validate',{method:'POST',signal:controller.signal,body:JSON.stringify({barcode:normalized,captureMethod,sessionId:selectedSession.id,...stamp})});
       if(revision!==scanRevisionRef.current)return;
       setGeo(stamp);setAttemptId(result.attemptId);
       if(!result.matched||!result.item){
@@ -342,6 +365,7 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
 
   async function startCamera(){
     if(!videoRef.current||busyRef.current)return;
+    if(!selectedSession){setError('An administrator must start an equipment or sample scan session first.');return}
     stopCamera();clearMatch();setMethod('CAMERA');setBarcode('');setManualBarcode('');setError('');setCameraOpening(true);
     const session=cameraSessionRef.current;
     const timeout=window.setTimeout(()=>{if(session===cameraSessionRef.current){stopCamera();setError('Camera opening timed out. Try again or use Refresh page.')}},30_000);
@@ -399,7 +423,7 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
       const result=await api<{replaced?:boolean;duplicate?:boolean}>('/api/scans',{method:'POST',body:JSON.stringify({
         barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
         reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,
-        validationAttemptId:attemptId,captureMethod:method,clientTransactionId:transactionRef.current,...geo,
+        validationAttemptId:attemptId,captureMethod:method,sessionId:selectedSession?.id,clientTransactionId:transactionRef.current,...geo,
       })});
       notify(result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`);
       resetScan();setFailures(0);setForm(current=>({...current,notes:'',reportIssue:false}));
@@ -407,8 +431,10 @@ function Scanner({locations,api,refresh,notify}:{locations:Location[];api:Api;re
     }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{busyRef.current=false;setBusy(false);setSubmitting(false)}
   }
 
+  if(!selectedSession) return <section className="scannerPage"><div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scanning is paused until an administrator starts a session.</p></div><div className="scannerHeroActions"><button type="button" className="secondary scannerRefresh" onClick={()=>void refresh()}><RefreshCw size={18}/> Refresh page</button></div></div><section className="scanLocked"><PlayCircle size={44}/><h3>No active scan session</h3><p>Ask an administrator to click <strong>Scan equipments</strong> or <strong>Scan samples</strong> from the Overview page. The matching checklist will then be available here.</p></section></section>;
   return <section className="scannerPage">
     <div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scan with the camera or enter a barcode manually. Every barcode is checked against inventory.</p></div><div className="scannerHeroActions"><button type="button" className="secondary scannerRefresh" onClick={refreshScanner} disabled={submitting}><RefreshCw size={18}/> Refresh page</button><div className={`gpsBadge ${geo?'ready':''}`}><LocateFixed size={18}/><span>{geo?`${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)}`:'GPS captured with every scan'}</span></div></div></div>
+    <div className="sessionPicker" aria-label="Active scan sessions">{sessions.map(session=><button type="button" key={session.id} className={selectedSession.id===session.id?'primary active':'secondary'} onClick={()=>{setSelectedSessionId(session.id);resetScan()}}>{session.inventory_type==='TOOL'?'Scan equipments':'Scan samples'}</button>)}</div>
     <div className="scannerGrid">
       <section className="cameraCard">
         <div className="cameraViewport"><video ref={videoRef} muted playsInline/><div className="scanReticle"><span/><span/><span/><span/></div>{!scanning&&<div className="cameraEmpty"><Camera size={42}/><strong>Ready to scan</strong><small>Use the rear camera and center the barcode.</small></div>}</div>

@@ -100,6 +100,20 @@ create table if not exists ims_scan_attempts (
   created_at timestamptz not null default now()
 );
 
+create table if not exists ims_scan_sessions (
+  id uuid primary key default gen_random_uuid(),
+  inventory_type varchar(20) not null check (inventory_type in ('TOOL','SAMPLE')),
+  status varchar(20) not null check (status in ('OPEN','CLOSED')) default 'OPEN',
+  started_by uuid not null references ims_users(id),
+  started_at timestamptz not null default now(),
+  closed_by uuid references ims_users(id),
+  closed_at timestamptz,
+  check ((status='OPEN' and closed_at is null) or (status='CLOSED' and closed_at is not null))
+);
+
+create unique index if not exists idx_scan_sessions_one_open_type
+  on ims_scan_sessions(inventory_type) where status='OPEN';
+
 alter table ims_scans add column if not exists validation_attempt_id uuid references ims_scan_attempts(id);
 alter table ims_scans add column if not exists capture_method varchar(20) check (capture_method in ('CAMERA','MANUAL'));
 alter table ims_scans add column if not exists latitude double precision;
@@ -107,6 +121,7 @@ alter table ims_scans add column if not exists longitude double precision;
 alter table ims_scans add column if not exists location_accuracy double precision;
 alter table ims_scans add column if not exists captured_at timestamptz;
 alter table ims_scans add column if not exists evidence_image_url text;
+alter table ims_scans add column if not exists session_id uuid references ims_scan_sessions(id);
 
 create table if not exists ims_issues (
   id uuid primary key default gen_random_uuid(),
@@ -143,4 +158,5 @@ create index if not exists idx_inventory_material on ims_inventory_items(materia
 create index if not exists idx_scans_item_time on ims_scans(inventory_item_id,scanned_at desc);
 create index if not exists idx_scans_user_time on ims_scans(scanner_user_id,scanned_at desc);
 create index if not exists idx_scan_attempts_user_time on ims_scan_attempts(scanner_user_id,created_at desc);
+create index if not exists idx_scan_sessions_type_status on ims_scan_sessions(inventory_type,status,started_at desc);
 create index if not exists idx_issues_status on ims_issues(status,reported_at desc);

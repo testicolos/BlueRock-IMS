@@ -4,14 +4,14 @@ import { reportClock, reportsAt } from '@/lib/scan-report-data';
 import type { ReportInventoryType } from '@/lib/scan-report-scope';
 export type { ChecklistRow, ScanReport } from '@/lib/scan-report-data';
 
-export async function scanChecklist(period: string | null, sql = db(), inventoryType: ReportInventoryType = 'ALL') {
+export async function scanChecklist(period: string | null, sql = db(), inventoryType: ReportInventoryType = 'ALL', sessionId: string | null = null) {
   const {now, anchor} = await reportClock(sql);
   const selected = resolveReportPeriod(anchor, now, period);
-  const [report] = await reportsAt([selected], sql, inventoryType);
+  const [report] = await reportsAt([selected], sql, inventoryType, sessionId);
   const current = resolveReportPeriod(anchor, now, 'current');
   return {
     ...report, generatedAt: new Date(now).toISOString(), timezone: REPORT_TIMEZONE, retentionDays: RETENTION_DAYS,
-    nextReportAt: current.endsAt, periods: reportHistory(anchor, now), months: reportMonths(anchor, now),
+    nextReportAt: current.endsAt, periods: reportHistory(anchor, now), months: reportMonths(anchor, now), scanSessionId: sessionId,
   };
 }
 

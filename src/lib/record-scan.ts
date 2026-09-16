@@ -15,6 +15,7 @@ export type RecordScanInput = {
   longitude: number;
   locationAccuracy?: number;
   capturedAt: string;
+  sessionId?: string;
 };
 
 // Called only inside a transaction. The optional clock is for deterministic
@@ -51,6 +52,14 @@ export async function recordScan(
     limit 1 for update
   `)[0];
   if (!item) throw new Error('ITEM_NOT_FOUND');
+  if (data.sessionId) {
+    const activeSession = (await tx`
+      select id from ims_scan_sessions
+      where id=${data.sessionId} and status='OPEN' and inventory_type=${item.inventory_type}
+      limit 1
+    `)[0];
+    if (!activeSession) throw new Error('SCAN_SESSION_REQUIRED');
+  }
   const location = (await tx`select id,name from ims_locations where id=${data.locationId} and active=true limit 1`)[0];
   if (!location) throw new Error('LOCATION_NOT_FOUND');
 
@@ -75,11 +84,11 @@ export async function recordScan(
   const scans = await tx`
     insert into ims_scans(
       inventory_item_id,barcode,previous_location_id,new_location_id,scanner_user_id,
-      condition,notes,client_transaction_id,validation_attempt_id,capture_method,
+      condition,notes,client_transaction_id,validation_attempt_id,capture_method,session_id,
       latitude,longitude,location_accuracy,captured_at,evidence_image_url,scan_window_id,scanned_at
     ) values(
       ${item.id},${item.barcode},${item.current_location_id},${location.id},${scannerId},
-      ${data.condition},${data.notes ?? null},${transactionId},${attempt.id},${data.captureMethod},
+      ${data.condition},${data.notes ?? null},${transactionId},${attempt.id},${data.captureMethod},${data.sessionId ?? null},
       ${data.latitude},${data.longitude},${data.locationAccuracy ?? null},${data.capturedAt},${data.evidenceImageUrl ?? null},${window.id},${scannedAt}
     ) returning id,barcode,scanned_at,scan_window_id
   `;

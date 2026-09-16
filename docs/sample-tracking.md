@@ -20,6 +20,22 @@ Customer and Employee instead of Location. Dates and times use Qatar/Saudi time
 (UTC+3). Historical scan status and evidence use the report cutoff; customer,
 employee, and other names use their current labels, not assignment snapshots.
 
+## Scan sessions
+
+The Overview page has two explicit controls: **Scan equipments** and **Scan
+samples**. A control creates one active checklist for that inventory type. Until
+an administrator starts the relevant session, its current checklist and Excel
+export remain closed and scanner users see a waiting message. Equipment and
+sample sessions are independent, so both may be active at once. The administrator
+can end an active session from the same Overview card; ending it immediately
+prevents new scans and closes the current checklist. Starting it again creates a
+fresh active session while preserving every previous scan and report.
+
+Scanner users only receive active sessions. They choose **Scan equipments** or
+**Scan samples** on Scan Unit, and every validation/submission is checked against
+that active session and the matching inventory type. A stale or closed session
+cannot accept a scan.
+
 The checklist and export APIs accept `inventoryType=TOOL` or `inventoryType=SAMPLE`.
 Omitting the selector preserves the previous combined API response. Invalid or
 duplicate selectors return 400. Both reports and exports remain admin-only.
@@ -33,6 +49,7 @@ history. `npm run test:material-api` exercises the actual API handlers against
 isolated schemas in that database, including concurrent updates and generation.
 Never use the production `DATABASE_URL` for these tests.
 
-`npm run test:scans`, `npm run test:report-xlsx`, and `npm run test:navigation`
-cover sample/material report separation, scan-window parity, export formatting,
-access control, and refresh/navigation restoration.
+`npm run test:scans`, `npm run test:scan-sessions`, `npm run test:report-xlsx`,
+and `npm run test:navigation` cover sample/material report separation,
+admin-controlled scan sessions, scan-window parity, export formatting, access
+control, and refresh/navigation restoration.

@@ -4,13 +4,18 @@ import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
 import { scanChecklist } from '@/lib/scan-checklist';
 import { reportInventoryType } from '@/lib/scan-report-scope';
+import { activeScanSession } from '@/lib/scan-sessions';
 
 export async function GET(request: NextRequest) {
   try {
     await requireAuth(request, ['ADMIN']);
     const inventoryType = reportInventoryType(request.nextUrl.searchParams);
     await ensureInventorySchema();
-    const response = ok(await scanChecklist(request.nextUrl.searchParams.get('period'), undefined, inventoryType));
+    const period = request.nextUrl.searchParams.get('period');
+    const isCurrent = !period || period === 'current';
+    const session = isCurrent && inventoryType !== 'ALL' ? await activeScanSession(inventoryType) : null;
+    if (isCurrent && inventoryType !== 'ALL' && !session) return fail('An administrator must start a scan session before opening this checklist.', 409);
+    const response = ok(await scanChecklist(period, undefined, inventoryType, session?.id ?? null));
     response.headers.set('Cache-Control', 'private, no-store');
     return response;
   } catch (error) {
