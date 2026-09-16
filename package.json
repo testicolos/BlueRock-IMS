@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:seed": "tsx scripts/seed-approved-inventory.ts",
     "test:scans": "tsx scripts/test-scan-windows.ts",
-    "test:scan-access": "tsx scripts/test-scan-access.ts"
+    "test:scan-access": "tsx scripts/test-scan-access.ts",
+    "test:navigation": "tsx scripts/test-view-navigation.ts"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",

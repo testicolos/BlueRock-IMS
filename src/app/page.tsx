@@ -10,6 +10,7 @@ import {
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import ScanEvidence from './scan-evidence';
 import ScanChecklist from './scan-checklist';
+import { resolveView, viewUrl, type View } from '@/lib/view-navigation';
 
 type User={id:string;username:string;fullName?:string;full_name?:string;role:'ADMIN'|'SCANNER';active?:boolean;last_login_at?:string};
 type Location={id:string;name:string;code:string;location_type?:string;address?:string;description?:string;active:boolean};
@@ -22,7 +23,6 @@ type ScanMatch={id:string;barcode:string;name:string;inventoryType:string;condit
 type ValidationResult={matched:boolean;attemptId:string;item:ScanMatch|null};
 type ApiResult<T>={success:boolean;data:T;error?:{message:string}};
 type Api=<T>(url:string,options?:RequestInit)=>Promise<T>;
-type View='dashboard'|'materials'|'locations'|'scanner'|'issues'|'users'|'scans'|'checklist';
 type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[]};
 
 const adminNav:[View,string,typeof CircleGauge][]=[
@@ -37,9 +37,27 @@ export default function Home(){
   const[locations,setLocations]=useState<Location[]>([]); const[materials,setMaterials]=useState<Material[]>([]); const[users,setUsers]=useState<User[]>([]);
   const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false);
 
-  useEffect(()=>{const savedToken=localStorage.getItem('br_token');const savedUser=localStorage.getItem('br_user');if(savedToken&&savedUser){setToken(savedToken);setMe(JSON.parse(savedUser))}},[]);
+  useEffect(()=>{const savedToken=localStorage.getItem('br_token');const savedUser=localStorage.getItem('br_user');if(savedToken&&savedUser){const user:User=JSON.parse(savedUser);setView(resolveView(window.location.search,user.role));setToken(savedToken);setMe(user)}},[]);
   useEffect(()=>{if('serviceWorker' in navigator)void navigator.serviceWorker.register('/sw.js')},[]);
-  useEffect(()=>{if(me?.role==='SCANNER'&&view!=='scanner')setView('scanner')},[me?.role,view]);
+  useEffect(()=>{
+    if(!me?.role)return;
+    const role=me.role;
+    function restoreView(){
+      const next=resolveView(window.location.search,role);
+      setView(next);setMobileNav(false);
+      const url=viewUrl(window.location.href,next,role);
+      if(url!==`${window.location.pathname}${window.location.search}${window.location.hash}`)window.history.replaceState(null,'',url);
+    }
+    restoreView();
+    window.addEventListener('popstate',restoreView);
+    return()=>window.removeEventListener('popstate',restoreView);
+  },[me?.role]);
+  function navigate(next:View){
+    if(!me)return;
+    const url=viewUrl(window.location.href,next,me.role);
+    if(url!==`${window.location.pathname}${window.location.search}${window.location.hash}`)window.history.pushState(null,'',url);
+    setView(resolveView(window.location.search,me.role));setMobileNav(false);
+  }
   const api:Api=async<T,>(url:string,options:RequestInit={})=>{const res=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...(options.headers||{})}});const body:ApiResult<T>=await res.json();if(!body.success)throw new Error(body.error?.message||'Request failed');return body.data};
   async function loadAll(){
     if(!token||!me)return;
@@ -52,7 +70,7 @@ export default function Home(){
   useEffect(()=>{void loadAll()},[token,me?.id]);
   function logout(){localStorage.removeItem('br_token');localStorage.removeItem('br_user');setToken('');setMe(null)}
   function notify(text:string){setMessage(text);window.setTimeout(()=>setMessage(''),3500)}
-  if(!token||!me)return <Login onLogin={(newToken,user)=>{localStorage.setItem('br_token',newToken);localStorage.setItem('br_user',JSON.stringify(user));setToken(newToken);setMe(user)}}/>;
+  if(!token||!me)return <Login onLogin={(newToken,user)=>{localStorage.setItem('br_token',newToken);localStorage.setItem('br_user',JSON.stringify(user));setView(resolveView(window.location.search,user.role));setToken(newToken);setMe(user)}}/>;
 
   const isAdmin=me.role==='ADMIN';
   const nav=isAdmin?adminNav:adminNav.filter(([key])=>key==='scanner');
@@ -62,7 +80,7 @@ export default function Home(){
     <aside id="main-navigation" className={`sidebar ${mobileNav?'open':''}`}>
       <button type="button" className="mobileClose" aria-label="Close menu" onClick={()=>setMobileNav(false)}><X size={20}/></button>
       <div className="sideBrand"><div className="brandMark"><span/></div><div><strong>BlueRock IMS</strong><small>Inventory Management</small></div></div>
-      <nav>{nav.map(([key,label,Icon])=><button key={key} className={view===key?'active':''} onClick={()=>{setView(key);setMobileNav(false)}}><Icon size={19}/><span>{label}</span>{key==='issues'&&openIssues.length>0?<b>{openIssues.length}</b>:null}</button>)}</nav>
+      <nav>{nav.map(([key,label,Icon])=><button key={key} className={view===key?'active':''} aria-current={view===key?'page':undefined} onClick={()=>navigate(key)}><Icon size={19}/><span>{label}</span>{key==='issues'&&openIssues.length>0?<b>{openIssues.length}</b>:null}</button>)}</nav>
       <div className="sidebarMotto">BUILT FOR<br/>A STRONGER<br/>TOMORROW</div>
       <div className="sideFoot"><div className="avatar">{(me.fullName||me.full_name||me.username).slice(0,2).toUpperCase()}</div><div><strong>{me.fullName||me.full_name||me.username}</strong><small>{pretty(me.role)}</small></div><button onClick={logout} title="Sign out"><LogOut size={18}/></button></div>
     </aside>
