@@ -3,12 +3,18 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -16,8 +22,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: bluerock_test
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres -d bluerock_test"
           --health-interval 10s
@@ -33,6 +38,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --import tsx scripts/test-auth-expiry.ts
+      - run: node --experimental-test-module-mocks --import tsx scripts/test-login-tracing.ts
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:navigation
@@ -42,6 +48,11 @@ jobs:
       - run: npm run test:scanner-workflow
       - run: npm run test:material-api
       - run: npm run test:sample-assignments
-      # test:scans contains legacy assertions that a scan immediately moves an item.
-      # Movement now requires transfer approval and is covered by test:scanner-workflow.
+      # Existing legacy rolling-window assertions still require a separate update.
+      # Do not claim the excluded test:scans suite passed.
       - run: npm run test:report-xlsx
+      - name: Install isolated browser test tooling (not a production dependency)
+        run: npm install --no-save --package-lock=false playwright@1.63.0
+      - run: npx playwright install --with-deps chromium
+      - name: Real browser login and session recovery against disposable database
+        run: node scripts/test-login-browser.mjs
