@@ -3,7 +3,7 @@ import { assertScanEvidence } from './scan-evidence-policy';
 
 export type RecordScanInput = {
   barcode: string;
-  locationId: string;
+  locationId?: string;
   condition: 'GOOD' | 'MINOR_ISSUE' | 'DAMAGED' | 'MISSING_PARTS' | 'NEEDS_MAINTENANCE';
   notes?: string;
   reportIssue: boolean;
@@ -18,8 +18,6 @@ export type RecordScanInput = {
   sessionId?: string;
 };
 
-// Called only inside a transaction. The optional clock is for deterministic
-// database tests; production always reads the database clock after the item lock.
 export async function recordScan(
   tx: TransactionSql,
   scannerId: string,
@@ -60,8 +58,13 @@ export async function recordScan(
     `)[0];
     if (!activeSession) throw new Error('SCAN_SESSION_REQUIRED');
   }
-  const location = (await tx`select id,name from ims_locations where id=${data.locationId} and active=true limit 1`)[0];
-  if (!location) throw new Error('LOCATION_NOT_FOUND');
+
+  let destination = null;
+  if (data.locationId) {
+    destination = (await tx`select id,name from ims_locations where id=${data.locationId} and active=true limit 1`)[0];
+    if (!destination) throw new Error('LOCATION_NOT_FOUND');
+    if (destination.id === item.current_location_id) destination = null;
+  }
 
   const scannedAt = testClock ? await testClock() : (await tx`
     select greatest(clock_timestamp(), coalesce(
@@ -87,17 +90,32 @@ export async function recordScan(
       condition,notes,client_transaction_id,validation_attempt_id,capture_method,session_id,
       latitude,longitude,location_accuracy,captured_at,evidence_image_url,scan_window_id,scanned_at
     ) values(
-      ${item.id},${item.barcode},${item.current_location_id},${location.id},${scannerId},
+      ${item.id},${item.barcode},${item.current_location_id},${null},${scannerId},
       ${data.condition},${data.notes ?? null},${transactionId},${attempt.id},${data.captureMethod},${data.sessionId ?? null},
       ${data.latitude},${data.longitude},${data.locationAccuracy ?? null},${data.capturedAt},${data.evidenceImageUrl ?? null},${window.id},${scannedAt}
     ) returning id,barcode,scanned_at,scan_window_id
   `;
+
   await tx`
     update ims_inventory_items
-    set current_location_id=${location.id},condition=${data.condition},last_scanned_at=${scannedAt},
-      last_scanned_by=${scannerId},updated_at=${scannedAt}
+    set condition=${data.condition},last_scanned_at=${scannedAt},last_scanned_by=${scannerId},updated_at=${scannedAt}
     where id=${item.id}
   `;
+
+  let transfer = null;
+  if (destination) {
+    const pending = (await tx`
+      select id from ims_location_transfers where inventory_item_id=${item.id} and status='PENDING' limit 1
+    `)[0];
+    if (pending) throw new Error('TRANSFER_ALREADY_PENDING');
+    transfer = (await tx`
+      insert into ims_location_transfers(
+        inventory_item_id,from_location_id,destination_location_id,requested_by,request_scan_id
+      ) values(${item.id},${item.current_location_id},${destination.id},${scannerId},${scans[0].id})
+      returning id,status,requested_at
+    `)[0];
+  }
+
   if (data.reportIssue) {
     await tx`
       insert into ims_issues(inventory_item_id,scan_id,reported_by,issue_type,description,image_url)
@@ -112,7 +130,7 @@ export async function recordScan(
     windowExpiresAt: window.expires_at,
     scan: scans[0],
     item: { id: item.id, barcode: item.barcode, name: item.name },
-    previousLocationId: item.current_location_id,
-    newLocation: { id: location.id, name: location.name },
+    currentLocationId: item.current_location_id,
+    transfer: transfer && destination ? { ...transfer, destination: { id: destination.id, name: destination.name } } : null,
   };
 }
