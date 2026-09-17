@@ -15,7 +15,8 @@
     "test:report-xlsx": "tsx scripts/test-report-xlsx.ts",
     "test:sample-assignments": "tsx scripts/test-material-assignments.ts",
     "test:material-api": "node --experimental-test-module-mocks --import tsx scripts/test-material-api.ts",
-    "test:scan-sessions": "node --experimental-test-module-mocks --import tsx scripts/test-scan-sessions.ts"
+    "test:scan-sessions": "node --experimental-test-module-mocks --import tsx scripts/test-scan-sessions.ts",
+    "test:scanner-workflow": "node --experimental-test-module-mocks --import tsx scripts/test-scanner-workflow.ts"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",
