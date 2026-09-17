@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   title: 'BlueRock IMS',
   description: 'BlueRock Inventory Management System',
   applicationName: 'BlueRock IMS',
+  icons: {
+    icon: '/icons/192',
+    apple: '/icons/192',
+  },
   appleWebApp: {
     capable: true,
     title: 'BlueRock IMS',
