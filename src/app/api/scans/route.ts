@@ -45,7 +45,11 @@ export async function POST(request: NextRequest) {
     const actor = await requireAuth(request);
     await ensureInventorySchema();
     const parsed = schema.safeParse(await request.json());
-    if (!parsed.success) return fail('Invalid scan', 400, parsed.error.flatten());
+    if (!parsed.success) {
+      const oversizedEvidence = parsed.error.issues.some(issue => issue.path[0] === 'evidenceImageUrl' && issue.code === 'too_big');
+      if (oversizedEvidence) return fail('Attached image is too large. Retake the photo closer to the barcode or choose a smaller image.', 413, parsed.error.flatten());
+      return fail('Invalid scan', 400, parsed.error.flatten());
+    }
     const data = parsed.data;
     assertScanEvidence(data);
 

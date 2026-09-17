@@ -492,6 +492,19 @@ async function stampedImage(file:File,stamp:GeoStamp,barcode:string){
   const image=await loadPhoto(file);const max=1600;const scale=Math.min(1,max/Math.max(image.naturalWidth,image.naturalHeight));const width=Math.max(1,Math.round(image.naturalWidth*scale));const height=Math.max(1,Math.round(image.naturalHeight*scale));
   const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;const context=canvas.getContext('2d');if(!context)throw new Error('Unable to process this photo');context.drawImage(image,0,0,width,height);
   const font=Math.max(18,Math.round(width/48));const line=Math.round(font*1.4);const band=line*3+Math.round(font*.9);context.fillStyle='rgba(19,20,19,.78)';context.fillRect(0,height-band,width,band);context.fillStyle='#fff';context.font=`700 ${font}px system-ui,sans-serif`;context.textBaseline='top';const x=Math.round(font*.75);const y=height-band+Math.round(font*.45);context.fillText(`BlueRock IMS · ${barcode||'UNIT PHOTO'}`,x,y);context.font=`500 ${Math.max(15,font*.82)}px system-ui,sans-serif`;context.fillText(new Date(stamp.capturedAt).toLocaleString(),x,y+line);context.fillStyle='#ff8a46';context.fillText(`${stamp.latitude.toFixed(6)}, ${stamp.longitude.toFixed(6)} · ±${Math.round(stamp.locationAccuracy??0)} m`,x,y+line*2);
-  return canvas.toDataURL('image/jpeg',.82);
+  // Vercel's request limit and the API validation cap leave room for the rest
+  // of the JSON payload. Re-encode progressively so high-detail phone photos
+  // cannot turn an otherwise valid scan into a generic "Invalid scan" error.
+  const maxDataUrlLength=3_200_000;
+  for(const quality of [.82,.72,.62,.52,.42]){
+    const data=canvas.toDataURL('image/jpeg',quality);
+    if(data.length<=maxDataUrlLength)return data;
+  }
+  const smaller=document.createElement('canvas');const reducedScale=Math.min(1,1280/Math.max(width,height));smaller.width=Math.max(1,Math.round(width*reducedScale));smaller.height=Math.max(1,Math.round(height*reducedScale));const smallerContext=smaller.getContext('2d');if(!smallerContext)throw new Error('Unable to process this photo');smallerContext.drawImage(canvas,0,0,smaller.width,smaller.height);
+  for(const quality of [.72,.62,.52,.42,.32]){
+    const data=smaller.toDataURL('image/jpeg',quality);
+    if(data.length<=maxDataUrlLength)return data;
+  }
+  throw new Error('This photo is too detailed to attach. Retake it closer to the barcode or choose a smaller image.');
 }
 function fileData(file:File){return new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)})}
