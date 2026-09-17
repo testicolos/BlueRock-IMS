@@ -38,6 +38,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --import tsx scripts/test-auth-expiry.ts
+      - run: node --import tsx scripts/test-client-requests.ts
       - run: node --experimental-test-module-mocks --import tsx scripts/test-login-tracing.ts
       - run: npm run typecheck
       - run: npm run build
