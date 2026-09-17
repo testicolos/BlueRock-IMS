@@ -11,6 +11,8 @@ export default function ScannerConfigPage(){
   async function load(){
     const t=token();if(!t){window.location.href='/';return}
     try{
+      const stored=localStorage.getItem('br_user');const role=stored?JSON.parse(stored)?.role:null;
+      if(role!=='ADMIN'){window.location.replace(role==='SCANNER'?'/scan':'/');return}
       const headers={Authorization:`Bearer ${t}`};
       const[userRes,locationRes]=await Promise.all([fetch('/api/users',{headers,cache:'no-store'}),fetch('/api/locations',{headers,cache:'no-store'})]);
       const[userBody,locationBody]=await Promise.all([userRes.json(),locationRes.json()]);
