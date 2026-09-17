@@ -12,6 +12,7 @@ export function ensureScannerLocationSchema() {
 export async function migrateScannerLocationSchema(database: Sql | TransactionSql) {
   await database`alter table ims_users add column if not exists assigned_location_id uuid references ims_locations(id)`;
   await database`create index if not exists idx_users_assigned_location on ims_users(assigned_location_id) where active=true`;
+  await database`alter table ims_scans alter column new_location_id drop not null`;
   await database`create table if not exists ims_location_transfers (
     id uuid primary key default gen_random_uuid(),
     inventory_item_id uuid not null references ims_inventory_items(id),
@@ -28,4 +29,6 @@ export async function migrateScannerLocationSchema(database: Sql | TransactionSq
   )`;
   await database`create unique index if not exists idx_location_transfers_one_pending_item on ims_location_transfers(inventory_item_id) where status='PENDING'`;
   await database`create index if not exists idx_location_transfers_destination on ims_location_transfers(destination_location_id,status,requested_at desc)`;
+  await database`alter table ims_location_transfers enable row level security`;
+  await database`revoke all on ims_location_transfers from public`;
 }
