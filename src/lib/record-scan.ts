@@ -130,6 +130,7 @@ export async function recordScan(
     windowExpiresAt: window.expires_at,
     scan: scans[0],
     item: { id: item.id, barcode: item.barcode, name: item.name },
+    previousLocationId: item.current_location_id,
     currentLocationId: item.current_location_id,
     transfer: transfer && destination ? { ...transfer, destination: { id: destination.id, name: destination.name } } : null,
   };
