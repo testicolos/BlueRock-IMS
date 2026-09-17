@@ -13,7 +13,7 @@ const schema = z.object({
   longitude: z.number().min(-180).max(180),
   locationAccuracy: z.number().nonnegative().max(100_000).optional(),
   capturedAt: z.string().datetime(),
-  sessionId: z.string().uuid(),
+  sessionId: z.string().uuid().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     const barcode = data.barcode.toUpperCase();
     const sql = db();
     const item = (await sql`
-      select i.id,i.barcode,i.name,i.inventory_type,i.condition,i.status,
+      select i.id,i.barcode,i.name,i.inventory_type,i.condition,i.status,i.current_location_id,
         l.name as location_name,m.image_url
       from ims_inventory_items i
       left join ims_locations l on l.id=i.current_location_id
@@ -35,13 +35,17 @@ export async function POST(request: NextRequest) {
       where i.barcode=${barcode} and i.archived=false
       limit 1
     `)[0];
-    const session = await sql`
-      select id from ims_scan_sessions
-      where id=${data.sessionId} and status='OPEN'
-        and (${item?.inventory_type ?? 'NONE'}='NONE' or inventory_type=${item?.inventory_type ?? 'NONE'})
-      limit 1
-    `;
-    if (!session.length) return fail('No active admin scan session for this item type. Ask an administrator to start scanning.', 409);
+
+    if (data.sessionId) {
+      const session = await sql`
+        select id from ims_scan_sessions
+        where id=${data.sessionId} and status='OPEN'
+          and (${item?.inventory_type ?? 'NONE'}='NONE' or inventory_type=${item?.inventory_type ?? 'NONE'})
+        limit 1
+      `;
+      if (!session.length) return fail('This scan session is no longer active.', 409);
+    }
+
     const attempt = (await sql`
       insert into ims_scan_attempts(
         scanner_user_id,inventory_item_id,barcode,matched,capture_method,
@@ -62,6 +66,7 @@ export async function POST(request: NextRequest) {
         inventoryType: item.inventory_type,
         condition: item.condition,
         status: item.status,
+        currentLocationId: item.current_location_id,
         locationName: item.location_name,
         imageUrl: item.image_url,
       } : null,

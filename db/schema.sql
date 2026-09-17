@@ -25,6 +25,8 @@ create table if not exists ims_locations (
   updated_at timestamptz not null default now()
 );
 
+alter table ims_users add column if not exists assigned_location_id uuid references ims_locations(id);
+
 create table if not exists ims_categories (
   id uuid primary key default gen_random_uuid(),
   name varchar(120) not null,
@@ -77,7 +79,7 @@ create table if not exists ims_scans (
   inventory_item_id uuid not null references ims_inventory_items(id),
   barcode varchar(100) not null,
   previous_location_id uuid references ims_locations(id),
-  new_location_id uuid not null references ims_locations(id),
+  new_location_id uuid references ims_locations(id),
   scanner_user_id uuid not null references ims_users(id),
   condition varchar(30) not null,
   notes text,
@@ -122,6 +124,22 @@ alter table ims_scans add column if not exists location_accuracy double precisio
 alter table ims_scans add column if not exists captured_at timestamptz;
 alter table ims_scans add column if not exists evidence_image_url text;
 alter table ims_scans add column if not exists session_id uuid references ims_scan_sessions(id);
+alter table ims_scans alter column new_location_id drop not null;
+
+create table if not exists ims_location_transfers (
+  id uuid primary key default gen_random_uuid(),
+  inventory_item_id uuid not null references ims_inventory_items(id),
+  from_location_id uuid references ims_locations(id),
+  destination_location_id uuid not null references ims_locations(id),
+  requested_by uuid not null references ims_users(id),
+  request_scan_id uuid references ims_scans(id),
+  status varchar(20) not null check (status in ('PENDING','APPROVED','REJECTED')) default 'PENDING',
+  decided_by uuid references ims_users(id),
+  requested_at timestamptz not null default now(),
+  decided_at timestamptz,
+  decision_note text,
+  check ((status='PENDING' and decided_at is null and decided_by is null) or (status in ('APPROVED','REJECTED') and decided_at is not null and decided_by is not null))
+);
 
 create table if not exists ims_issues (
   id uuid primary key default gen_random_uuid(),
@@ -160,3 +178,6 @@ create index if not exists idx_scans_user_time on ims_scans(scanner_user_id,scan
 create index if not exists idx_scan_attempts_user_time on ims_scan_attempts(scanner_user_id,created_at desc);
 create index if not exists idx_scan_sessions_type_status on ims_scan_sessions(inventory_type,status,started_at desc);
 create index if not exists idx_issues_status on ims_issues(status,reported_at desc);
+create index if not exists idx_users_assigned_location on ims_users(assigned_location_id) where active=true;
+create unique index if not exists idx_location_transfers_one_pending_item on ims_location_transfers(inventory_item_id) where status='PENDING';
+create index if not exists idx_location_transfers_destination on ims_location_transfers(destination_location_id,status,requested_at desc);

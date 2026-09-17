@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import MobileViewport from './mobile-viewport';
+import ScannerNav from './scanner-nav';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -25,7 +26,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body><MobileViewport/>{children}</body>
+      <body><MobileViewport/>{children}<ScannerNav/></body>
     </html>
   );
 }

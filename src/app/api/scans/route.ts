@@ -6,13 +6,14 @@ import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
+import { ensureScannerLocationSchema } from '@/lib/scanner-location-schema';
 import { scanRecords } from '@/lib/scan-records';
 import { recordScan } from '@/lib/record-scan';
 import { assertScanEvidence } from '@/lib/scan-evidence-policy';
 
 const schema = z.object({
   barcode: z.string().trim().min(3).max(100),
-  locationId: z.string().uuid(),
+  locationId: z.string().uuid().optional(),
   condition: z.enum(['GOOD', 'MINOR_ISSUE', 'DAMAGED', 'MISSING_PARTS', 'NEEDS_MAINTENANCE']).default('GOOD'),
   notes: z.string().max(2000).optional(),
   reportIssue: z.boolean().default(false),
@@ -25,13 +26,14 @@ const schema = z.object({
   locationAccuracy: z.number().nonnegative().max(100_000).optional(),
   capturedAt: z.string().datetime(),
   clientTransactionId: z.string().uuid().optional(),
-  sessionId: z.string().uuid(),
+  sessionId: z.string().uuid().optional(),
 });
 
 export async function GET(request: NextRequest) {
   try {
     await requireAuth(request, ['ADMIN']);
     await ensureInventorySchema();
+    await ensureScannerLocationSchema();
     const rows = await scanRecords();
     return ok(rows);
   } catch (error) {
@@ -44,6 +46,7 @@ export async function POST(request: NextRequest) {
   try {
     const actor = await requireAuth(request);
     await ensureInventorySchema();
+    await ensureScannerLocationSchema();
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) {
       const oversizedEvidence = parsed.error.issues.some(issue => issue.path[0] === 'evidenceImageUrl' && issue.code === 'too_big');
@@ -65,7 +68,8 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === 'INVALID_VALIDATION') return fail('Scan validation expired or does not match', 409);
     if (error instanceof Error && error.message === 'ITEM_NOT_FOUND') return fail('Item not found', 404);
     if (error instanceof Error && error.message === 'LOCATION_NOT_FOUND') return fail('Location not found or inactive', 404);
-    if (error instanceof Error && error.message === 'SCAN_SESSION_REQUIRED') return fail('This scan session is no longer active. Ask an administrator to start a new session.', 409);
+    if (error instanceof Error && error.message === 'SCAN_SESSION_REQUIRED') return fail('This scan session is no longer active.', 409);
+    if (error instanceof Error && error.message === 'TRANSFER_ALREADY_PENDING') return fail('This item already has a pending location transfer', 409);
     return serverError(error);
   }
 }
