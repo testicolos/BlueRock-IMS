@@ -15,9 +15,6 @@ export async function GET(request: NextRequest) {
     await ensureInventorySchema();
     const sql = db();
 
-    // Keep the initial application load on one database connection. The previous
-    // client made several simultaneous serverless requests, which could leave the
-    // dashboard showing zeroes while a pooled connection waited to become free.
     const locations = await sql`
       select id,name,code,description,address,location_type,active,created_at,updated_at
       from ims_locations
@@ -46,9 +43,11 @@ export async function GET(request: NextRequest) {
     `;
 
     const users = await sql`
-      select id,username,full_name,role,active,last_login_at,created_at,updated_at
-      from ims_users
-      order by full_name
+      select u.id,u.username,u.full_name,u.role,u.active,u.assigned_location_id,
+        assigned.name as assigned_location_name,u.last_login_at,u.created_at,u.updated_at
+      from ims_users u
+      left join ims_locations assigned on assigned.id=u.assigned_location_id
+      order by u.full_name
     `;
     const scans = await scanRecords();
     const issues = await sql`
