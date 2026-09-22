@@ -6,7 +6,7 @@ import { useEffect,useRef,useState } from 'react';
 
 type Session={id:string;status:'OPEN'|'CLOSED';started_at:string;total:number;validated:number};
 type SessionResponse={sessions:Session[];sessionId:string|null;targets:unknown[]};
-type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string;alreadyValidated?:boolean};
+type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string;alreadyValidated?:boolean;requestActive?:boolean};
 const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE'];
 
 export default function OfficeScanPage(){
@@ -24,26 +24,26 @@ export default function OfficeScanPage(){
   useEffect(()=>{void load();return()=>stopCamera()},[]);
   function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false)}
   async function scanBarcode(value:string){
-    if(!session||busy)return;const barcode=value.trim().toUpperCase();if(barcode.length<3){setError('Enter a valid Office Inventory barcode');return}
+    if(busy)return;const barcode=value.trim().toUpperCase();if(barcode.length<3){setError('Enter a valid Office Inventory barcode');return}
     setBusy(true);setError('');setMessage('');
     try{
-      const result=await request<Item>('/api/office-validation/validate',{method:'POST',body:JSON.stringify({sessionId:session.id,barcode})});
+      const result=await request<Item>('/api/office-validation/validate',{method:'POST',body:JSON.stringify({...(session?{sessionId:session.id}:{}),barcode})});
       setItem(result);setCondition(result.condition||'GOOD');setManual('');
       if(result.alreadyValidated)setMessage(result.barcode+' is already validated in this request. You can confirm again to add another scan-history entry.');
     }catch(reason){setItem(null);setError(reason instanceof Error?reason.message:'Unable to match office item')}finally{setBusy(false)}
   }
   async function confirmValidation(){
-    if(!session||!item||busy)return;
+    if(!item||busy)return;
     setBusy(true);setError('');setMessage('');
     try{
-      const result=await request<{duplicate:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({sessionId:session.id,barcode:item.barcode,condition})});
-      setItem({...result.item,alreadyValidated:true});
-      setMessage(result.duplicate?result.item.barcode+' was already validated. This confirmation was added to scan history.':result.item.barcode+' validated successfully.');
+      const result=await request<{duplicate:boolean;requestActive:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({...(session?{sessionId:session.id}:{}),barcode:item.barcode,condition})});
+      setItem({...result.item,alreadyValidated:result.requestActive});
+      setMessage(result.requestActive?(result.duplicate?result.item.barcode+' was already counted in this validation request. This scan was still recorded.':result.item.barcode+' scanned successfully and counted toward the active validation request.'):result.item.barcode+' scanned successfully.');
       await load();
     }catch(reason){setError(reason instanceof Error?reason.message:'Unable to validate office item')}finally{setBusy(false)}
   }
   async function openCamera(){
-    if(!videoRef.current||busy||!session)return;stopCamera();setError('');setMessage('');
+    if(!videoRef.current||busy)return;stopCamera();setError('');setMessage('');
     try{
       const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'}}});streamRef.current=stream;setScanning(true);
       const reader=new BrowserMultiFormatReader();
