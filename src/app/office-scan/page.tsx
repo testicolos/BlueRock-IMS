@@ -6,7 +6,7 @@ import { useEffect,useRef,useState } from 'react';
 
 type Session={id:string;status:'OPEN'|'CLOSED';started_at:string;total:number;validated:number};
 type SessionResponse={sessions:Session[];sessionId:string|null;targets:unknown[]};
-type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string;alreadyValidated?:boolean;requestActive?:boolean};
+type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string;alreadyValidated?:boolean;requestActive?:boolean;inRequest?:boolean};
 const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE'];
 
 export default function OfficeScanPage(){
@@ -21,7 +21,7 @@ export default function OfficeScanPage(){
     if(!token()){window.location.href='/';return}
     try{const data=await request<SessionResponse>('/api/office-validation-sessions?summary=1',{cache:'no-store'});setSession(data.sessions.find(row=>row.status==='OPEN')||null)}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load validation request')}
   }
-  useEffect(()=>{void load();return()=>stopCamera()},[]);
+  useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),10_000);return()=>{window.clearInterval(timer);stopCamera()}},[]);
   function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false)}
   async function scanBarcode(value:string){
     if(busy)return;const barcode=value.trim().toUpperCase();if(barcode.length<3){setError('Enter a valid Office Inventory barcode');return}
@@ -29,16 +29,17 @@ export default function OfficeScanPage(){
     try{
       const result=await request<Item>('/api/office-validation/validate',{method:'POST',body:JSON.stringify({...(session?{sessionId:session.id}:{}),barcode})});
       setItem(result);setCondition(result.condition||'GOOD');setManual('');
-      if(result.alreadyValidated)setMessage(result.barcode+' is already validated in this request. You can confirm again to add another scan-history entry.');
+      if(result.requestActive&&!result.inRequest)setMessage(result.barcode+' is not part of the active validation request, but you can still record this scan.');
+      else if(result.alreadyValidated)setMessage(result.barcode+' is already validated in this request. You can confirm again to add another scan-history entry.');
     }catch(reason){setItem(null);setError(reason instanceof Error?reason.message:'Unable to match office item')}finally{setBusy(false)}
   }
   async function confirmValidation(){
     if(!item||busy)return;
     setBusy(true);setError('');setMessage('');
     try{
-      const result=await request<{duplicate:boolean;requestActive:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({...(session?{sessionId:session.id}:{}),barcode:item.barcode,condition})});
-      setItem({...result.item,alreadyValidated:result.requestActive});
-      setMessage(result.requestActive?(result.duplicate?result.item.barcode+' was already counted in this validation request. This scan was still recorded.':result.item.barcode+' scanned successfully and counted toward the active validation request.'):result.item.barcode+' scanned successfully.');
+      const result=await request<{duplicate:boolean;requestActive:boolean;requestCounted:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({...(session?{sessionId:session.id}:{}),barcode:item.barcode,condition})});
+      setItem({...result.item,alreadyValidated:result.requestCounted});
+      setMessage(result.requestCounted?(result.duplicate?result.item.barcode+' was already counted in this validation request. This scan was still recorded.':result.item.barcode+' scanned successfully and counted toward the active validation request.'):result.requestActive?result.item.barcode+' scanned successfully. This item is not part of the active validation request.':result.item.barcode+' scanned successfully.');
       await load();
     }catch(reason){setError(reason instanceof Error?reason.message:'Unable to validate office item')}finally{setBusy(false)}
   }
