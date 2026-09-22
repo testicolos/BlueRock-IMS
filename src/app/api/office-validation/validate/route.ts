@@ -15,18 +15,18 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return fail('Invalid Office Inventory barcode', 400, parsed.error.flatten());
     const data = parsed.data;
     const sql = db();
-    const session = (await sql\`select id from ims_office_validation_sessions where id=\${data.sessionId} and status='OPEN' limit 1\`)[0];
+    const session = (await sql`select id from ims_office_validation_sessions where id=${data.sessionId} and status='OPEN' limit 1`)[0];
     if (!session) return fail('This Office Inventory validation request is no longer active.', 409);
-    const item = (await sql\`
+    const item = (await sql`
       select i.id,i.barcode,i.name,i.category,i.manufacturer,i.model,i.serial_number,i.owner_name,
         i.condition,i.status,l.name as location_name,t.validated_at
       from ims_office_inventory_items i
       left join ims_locations l on l.id=i.current_location_id
-      left join ims_office_validation_targets t on t.inventory_item_id=i.id and t.session_id=\${data.sessionId}
-      where i.barcode=\${data.barcode.toUpperCase()} and i.archived=false limit 1
-    \`)[0];
+      left join ims_office_validation_targets t on t.inventory_item_id=i.id and t.session_id=${data.sessionId}
+      where i.barcode=${data.barcode.toUpperCase()} and i.archived=false limit 1
+    `)[0];
     if (!item) return fail('Barcode not found in Office Inventory', 404);
-    if (!item.validated_at && !(await sql\`select 1 from ims_office_validation_targets where session_id=\${data.sessionId} and inventory_item_id=\${item.id} limit 1\`).length) {
+    if (!item.validated_at && !(await sql`select 1 from ims_office_validation_targets where session_id=${data.sessionId} and inventory_item_id=${item.id} limit 1`).length) {
       return fail('This item is not part of the active Office Inventory validation request', 409);
     }
     return ok({
