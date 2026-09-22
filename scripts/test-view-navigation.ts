@@ -70,11 +70,15 @@ check('scanner URL normalization preserves unrelated state', () => {
   assert.equal(next.hash, '#capture');
 });
 
-check('scanner login exposes Office Inventory scanning', () => {
-  const pageSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
+check('scanner login exposes Office Inventory scanning on the real scanner route', () => {
+  const sessionGateSource = readFileSync(new URL('../src/app/session-gate.tsx', import.meta.url), 'utf8');
+  const scannerSource = readFileSync(new URL('../src/app/scan/page.tsx', import.meta.url), 'utf8');
   const officeScanSource = readFileSync(new URL('../src/app/office-scan/page.tsx', import.meta.url), 'utf8');
-  assert.match(pageSource, /scannerOfficeNav[^>]*href="\/office-scan"/);
-  assert.match(pageSource, /Scan Office Inventory/);
+  assert.match(sessionGateSource, /session\.user\.role === 'SCANNER' \? '\/scan'/);
+  assert.match(scannerSource, /href="\/office-scan"/);
+  assert.match(scannerSource, /Scan Office Inventory/);
+  assert.match(scannerSource, /Defect photo required/);
+  assert.match(scannerSource, /issueImageUrl/);
   assert.match(officeScanSource, /Office Inventory Validation/);
   assert.match(officeScanSource, /Open barcode camera/);
 });
