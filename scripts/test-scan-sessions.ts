@@ -121,12 +121,13 @@ async function main() {
     const officeSession = (await officeStarted.json()).data.session;
 
     const officeSaved = await officeScan.POST(request('POST', {
-      sessionId: officeSession.id, barcode: officeItem.barcode, condition: 'GOOD',
+      sessionId: officeSession.id, barcode: officeItem.barcode, condition: 'Good',
     }, scannerToken, 'office-validation/scan'));
     assert.equal(officeSaved.status, 201);
     const officeSavedBody = await officeSaved.json();
     assert.equal(officeSavedBody.data.item.id, officeItem.id);
     assert.equal(officeSavedBody.data.duplicate, false);
+    assert.equal(officeSavedBody.data.item.condition, 'GOOD');
     const [officeTarget] = await sql`
       select validated_at,validated_by from ims_office_validation_targets
       where session_id=${officeSession.id} and inventory_item_id=${officeItem.id}
