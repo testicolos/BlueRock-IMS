@@ -25,6 +25,7 @@ export const GET = withRequestTrace('app.load', async (request: NextRequest) => 
     const actor = await traceStage('token.verify', () => requireAuth(request));
     await traceStage('schema.inventory', () => ensureInventorySchema());
     const sql = db();
+    if (actor.role === 'ADMIN') await traceStage('schema.scanner', () => ensureScannerLocationSchema());
 
     const locationTask = traceStage('locations.read', () => boundedRead(sql, tx => tx`
       select id,name,code,description,address,location_type,active,created_at,updated_at
@@ -36,8 +37,6 @@ export const GET = withRequestTrace('app.load', async (request: NextRequest) => 
       const [locations, scanSessions] = await Promise.all([locationTask, sessionTask]);
       return ok({ locations, materials: [], users: [], scans: [], issues: [], scanSessions });
     }
-
-    await traceStage('schema.scanner', () => ensureScannerLocationSchema());
 
     const materialTask = traceStage('materials.read', () => boundedRead(sql, tx => tx`
       select m.*,coalesce(jsonb_agg(jsonb_build_object(
