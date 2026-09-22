@@ -29,6 +29,7 @@ async function main() {
     const sessions = await import('../src/app/api/scan-sessions/route');
     const validate = await import('../src/app/api/scans/validate/route');
     const scans = await import('../src/app/api/scans/route');
+    const issues = await import('../src/app/api/issues/route');
     const checklist = await import('../src/app/api/scans/checklist/route');
     const request = (method: string, body: unknown, token = adminToken, path = 'scan-sessions') => new NextRequest(`https://test.invalid/api/${path}`, {
       method, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -66,6 +67,14 @@ async function main() {
     const issueImageUrl = 'data:image/jpeg;base64,AA==';
     const savedDefect = await scans.POST(request('POST', { ...defectBase, issueImageUrl }, scannerToken, 'scans'));
     assert.equal(savedDefect.status, 201);
+    const savedDefectBody = await savedDefect.json();
+    assert.ok(savedDefectBody.data.issue?.id);
+    assert.equal(savedDefectBody.data.issue.status, 'OPEN');
+    const issueList = await issues.GET(request('GET', undefined, adminToken, 'issues'));
+    assert.equal(issueList.status, 200);
+    const issueRows = (await issueList.json()).data;
+    assert.equal(issueRows.length, 1);
+    assert.equal(issueRows[0].id, savedDefectBody.data.issue.id);
     const [reportedIssue] = await sql`select issue_type,description,image_url,reported_by from ims_issues where inventory_item_id=${tool.id} order by reported_at desc limit 1`;
     assert.equal(reportedIssue.issue_type, 'Cracked housing');
     assert.equal(reportedIssue.description, 'Visible crack reported during scan');
