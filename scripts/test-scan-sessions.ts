@@ -60,8 +60,18 @@ async function main() {
     assert.equal(attempt.matched, true);
     assert.equal((await checklist.GET(request('GET', undefined, adminToken, 'scans/checklist?inventoryType=TOOL'))).status, 200);
 
+    const preservedConditionScan = await scans.POST(request('POST', {
+      barcode: tool.barcode, locationId: location.id, condition: 'MISSING_PARTS', reportIssue: false,
+      validationAttemptId: attempt.attemptId, captureMethod: 'CAMERA', sessionId: first.session.id,
+      latitude: 25.1, longitude: 51.2, capturedAt: now,
+    }, scannerToken, 'scans'));
+    assert.equal(preservedConditionScan.status, 201);
+    const [preservedItem] = await sql`select condition from ims_inventory_items where id=${tool.id}`;
+    assert.equal(preservedItem.condition, 'GOOD');
+    console.log('PASS: scanner-supplied condition is ignored for normal Materials / Samples scans');
+
     const defectBase = {
-      barcode: tool.barcode, locationId: location.id, condition: 'DAMAGED', reportIssue: true,
+      barcode: tool.barcode, locationId: location.id, condition: 'GOOD', reportIssue: true,
       issueType: 'Cracked housing', notes: 'Visible crack reported during scan',
       validationAttemptId: attempt.attemptId, captureMethod: 'CAMERA' as const, sessionId: first.session.id,
       latitude: 25.1, longitude: 51.2, capturedAt: now,
@@ -84,7 +94,9 @@ async function main() {
     assert.equal(reportedIssue.description, 'Visible crack reported during scan');
     assert.equal(reportedIssue.image_url, issueImageUrl);
     assert.equal(reportedIssue.reported_by, scanner.id);
-    console.log('PASS: scan defect reports require and persist their own defect photo');
+    const [damagedItem] = await sql`select condition from ims_inventory_items where id=${tool.id}`;
+    assert.equal(damagedItem.condition,'DAMAGED');
+    console.log('PASS: reporting a defect marks the item DAMAGED and persists its own defect photo');
 
     const closed = await sessions.PATCH(request('PATCH', { id: first.session.id, action: 'close' }));
     assert.equal(closed.status, 200);
@@ -116,6 +128,26 @@ async function main() {
     assert.equal(officeCreate.status, 201);
     const officeItem = (await officeCreate.json()).data[0];
     assert.match(officeItem.barcode, /^OI-LAP-/);
+
+    const deniedOffice = await officeValidate.POST(request('POST', {
+      barcode: officeItem.barcode,
+    }, scannerToken, 'office-validation/validate'));
+    assert.equal(deniedOffice.status, 403);
+    console.log('PASS: Materials / Samples-only scanners cannot bypass Office Inventory access');
+
+    await sql`update ims_users set scanner_access='OFFICE' where id=${scanner.id}`;
+    const deniedMaterials = await validate.POST(request('POST', {
+      barcode: tool.barcode, captureMethod: 'CAMERA', latitude: 25.1, longitude: 51.2, capturedAt: now,
+    }, scannerToken, 'scans/validate'));
+    assert.equal(deniedMaterials.status, 403);
+    console.log('PASS: Office-only scanners cannot bypass Materials / Samples access');
+
+    await sql`update ims_users set scanner_access='BOTH' where id=${scanner.id}`;
+    const bothMaterials = await validate.POST(request('POST', {
+      barcode: tool.barcode, captureMethod: 'CAMERA', latitude: 25.1, longitude: 51.2, capturedAt: now,
+    }, scannerToken, 'scans/validate'));
+    assert.equal(bothMaterials.status, 200);
+    console.log('PASS: Both access permits normal Materials / Samples scanning');
 
     const adHocLookup = await officeValidate.POST(request('POST', {
       barcode: officeItem.barcode,
