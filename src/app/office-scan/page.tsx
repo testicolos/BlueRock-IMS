@@ -6,7 +6,7 @@ import { useEffect,useRef,useState } from 'react';
 
 type Session={id:string;status:'OPEN'|'CLOSED';started_at:string;total:number;validated:number};
 type SessionResponse={sessions:Session[];sessionId:string|null;targets:unknown[]};
-type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string};
+type Item={id:string;barcode:string;name:string;category:string;manufacturer?:string|null;model?:string|null;serialNumber?:string|null;ownerName?:string|null;locationName?:string|null;condition:string;status:string;alreadyValidated?:boolean};
 const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE'];
 
 export default function OfficeScanPage(){
@@ -27,11 +27,20 @@ export default function OfficeScanPage(){
     if(!session||busy)return;const barcode=value.trim().toUpperCase();if(barcode.length<3){setError('Enter a valid Office Inventory barcode');return}
     setBusy(true);setError('');setMessage('');
     try{
-      const result=await request<{duplicate:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({sessionId:session.id,barcode,condition})});
-      setItem(result.item);setCondition(result.item.condition||'GOOD');setManual('');
-      setMessage(result.duplicate?result.item.barcode+' was already validated in this request. The scan was added to history.':result.item.barcode+' validated successfully.');
+      const result=await request<Item>('/api/office-validation/validate',{method:'POST',body:JSON.stringify({sessionId:session.id,barcode})});
+      setItem(result);setCondition(result.condition||'GOOD');setManual('');
+      if(result.alreadyValidated)setMessage(result.barcode+' is already validated in this request. You can confirm again to add another scan-history entry.');
+    }catch(reason){setItem(null);setError(reason instanceof Error?reason.message:'Unable to match office item')}finally{setBusy(false)}
+  }
+  async function confirmValidation(){
+    if(!session||!item||busy)return;
+    setBusy(true);setError('');setMessage('');
+    try{
+      const result=await request<{duplicate:boolean;item:Item;scannedAt:string}>('/api/office-validation/scan',{method:'POST',body:JSON.stringify({sessionId:session.id,barcode:item.barcode,condition})});
+      setItem({...result.item,alreadyValidated:true});
+      setMessage(result.duplicate?result.item.barcode+' was already validated. This confirmation was added to scan history.':result.item.barcode+' validated successfully.');
       await load();
-    }catch(reason){setItem(null);setError(reason instanceof Error?reason.message:'Unable to validate office item')}finally{setBusy(false)}
+    }catch(reason){setError(reason instanceof Error?reason.message:'Unable to validate office item')}finally{setBusy(false)}
   }
   async function openCamera(){
     if(!videoRef.current||busy||!session)return;stopCamera();setError('');setMessage('');
@@ -53,7 +62,7 @@ export default function OfficeScanPage(){
       {message&&<div style={{...card,marginBottom:14,borderColor:'#72a77b',color:'#315c38'}}>{message}</div>}{error&&<div style={{...card,marginBottom:14,borderColor:'#d56b5c',color:'#8b3328'}}>{error}</div>}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(320px,1fr))',gap:16}}>
         <section style={card}><div style={{position:'relative',aspectRatio:'4/3',background:'#1d1f1e',borderRadius:14,overflow:'hidden',display:'grid',placeItems:'center'}}><video ref={videoRef} muted playsInline style={{width:'100%',height:'100%',objectFit:'cover'}}/>{!scanning&&<div style={{position:'absolute',color:'#fff',textAlign:'center'}}><Camera size={42}/><strong style={{display:'block',marginTop:8}}>Camera ready</strong></div>}</div><button disabled={busy} onClick={scanning?stopCamera:()=>void openCamera()} style={{...button,width:'100%',marginTop:12,background:scanning?'#e6e2d9':'#ff8a46'}}>{scanning?<><X size={17}/> Stop camera</>:<><Camera size={17}/> Open barcode camera</>}</button><div style={{marginTop:18,borderTop:'1px solid #e6e2d9',paddingTop:16}}><label style={{fontWeight:700,display:'block',marginBottom:7}}><Keyboard size={17}/> Manual barcode</label><div style={{display:'flex',gap:8}}><input style={input} placeholder="OI-LAP-0001" value={manual} onChange={e=>setManual(e.target.value.toUpperCase())} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void scanBarcode(manual)}}}/><button disabled={busy||manual.trim().length<3} style={{...button,background:'#e8e4da'}} onClick={()=>void scanBarcode(manual)}>Validate</button></div></div></section>
-        <section style={card}>{item?<><div style={{display:'flex',alignItems:'center',gap:8,color:'#315c38'}}><CheckCircle2 size={20}/><strong>Office Inventory match</strong></div><h2 style={{marginBottom:4}}>{item.name}</h2><code>{item.barcode}</code><dl style={{display:'grid',gridTemplateColumns:'140px 1fr',gap:'10px 12px',marginTop:20}}><dt>Category</dt><dd>{item.category}</dd><dt>Manufacturer</dt><dd>{item.manufacturer||'—'}</dd><dt>Model</dt><dd>{item.model||'—'}</dd><dt>Serial number</dt><dd>{item.serialNumber||'—'}</dd><dt><UserRound size={15}/> Owner</dt><dd><strong>{item.ownerName||'Unassigned'}</strong></dd><dt>Location</dt><dd>{item.locationName||'Unassigned'}</dd><dt>Status</dt><dd>{pretty(item.status)}</dd></dl></>:<div style={{textAlign:'center',padding:'24px 0'}}><ScanLine size={40}/><h2>No item scanned yet</h2><p>Scan an OI barcode to see the registered device and its owner.</p></div>}<label style={{display:'block',fontWeight:700,marginTop:18}}>Condition<select style={{...input,marginTop:7}} value={condition} onChange={e=>setCondition(e.target.value)}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label><small style={{display:'block',marginTop:10,color:'#666'}}>Condition is updated when the next barcode is validated. Owner cannot be changed from this page.</small></section>
+        <section style={card}>{item?<><div style={{display:'flex',alignItems:'center',gap:8,color:'#315c38'}}><CheckCircle2 size={20}/><strong>Office Inventory match</strong></div><h2 style={{marginBottom:4}}>{item.name}</h2><code>{item.barcode}</code><dl style={{display:'grid',gridTemplateColumns:'140px 1fr',gap:'10px 12px',marginTop:20}}><dt>Category</dt><dd>{item.category}</dd><dt>Manufacturer</dt><dd>{item.manufacturer||'—'}</dd><dt>Model</dt><dd>{item.model||'—'}</dd><dt>Serial number</dt><dd>{item.serialNumber||'—'}</dd><dt><UserRound size={15}/> Owner</dt><dd><strong>{item.ownerName||'Unassigned'}</strong></dd><dt>Location</dt><dd>{item.locationName||'Unassigned'}</dd><dt>Status</dt><dd>{pretty(item.status)}</dd></dl></>:<div style={{textAlign:'center',padding:'24px 0'}}><ScanLine size={40}/><h2>No item scanned yet</h2><p>Scan an OI barcode to see the registered device and its owner.</p></div>}<label style={{display:'block',fontWeight:700,marginTop:18}}>Condition<select style={{...input,marginTop:7}} value={condition} onChange={e=>setCondition(e.target.value)}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label><button disabled={busy||!item} onClick={()=>void confirmValidation()} style={{...button,width:'100%',marginTop:16,background:'#ff8a46'}}><CheckCircle2 size={17}/> {busy?'Saving…':item?.alreadyValidated?'Confirm again':'Confirm validation'}</button><small style={{display:'block',marginTop:10,color:'#666'}}>Review the device and owner, choose the current condition, then confirm. Owner cannot be changed from this page.</small></section>
       </div>
     </>}
   </div></main>
