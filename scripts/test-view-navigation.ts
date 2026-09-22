@@ -74,13 +74,22 @@ check('scanner login exposes Office Inventory scanning on the real scanner route
   const sessionGateSource = readFileSync(new URL('../src/app/session-gate.tsx', import.meta.url), 'utf8');
   const scannerSource = readFileSync(new URL('../src/app/scan/page.tsx', import.meta.url), 'utf8');
   const officeScanSource = readFileSync(new URL('../src/app/office-scan/page.tsx', import.meta.url), 'utf8');
+  const scannerSetupSource = readFileSync(new URL('../src/app/scanner-config/page.tsx', import.meta.url), 'utf8');
   assert.match(sessionGateSource, /session\.user\.role === 'SCANNER' \? '\/scan'/);
+  assert.match(scannerSource, /\/api\/scanner-access/);
+  assert.match(scannerSource, /access\?\.materials/);
+  assert.match(scannerSource, /access\?\.office/);
   assert.match(scannerSource, /href="\/office-scan"/);
   assert.match(scannerSource, /Scan Office Inventory/);
+  assert.doesNotMatch(scannerSource, /<label[^>]*>Condition/);
   assert.match(scannerSource, /Defect photo required/);
   assert.match(scannerSource, /issueImageUrl/);
   assert.match(officeScanSource, /Office Inventory Scanner/);
+  assert.match(officeScanSource, /Office Inventory access not enabled/);
   assert.match(officeScanSource, /Open barcode camera/);
+  assert.match(scannerSetupSource, /Materials \/ Samples/);
+  assert.match(scannerSetupSource, /Office Inventory/);
+  assert.match(scannerSetupSource, /Both/);
 });
 
 check('sequential navigation and saved history URLs restore the correct pages', () => {
