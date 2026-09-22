@@ -5,6 +5,7 @@ import { requireAuth,authFailure } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail,ok,serverError } from '@/lib/http';
 import { ensureScannerLocationSchema } from '@/lib/scanner-location-schema';
+import { ensureScannerAccessSchema } from '@/lib/scanner-access';
 
 const schema=z.object({
   fullName:z.string().min(2).max(120).optional(),
@@ -12,12 +13,14 @@ const schema=z.object({
   active:z.boolean().optional(),
   password:z.string().min(12).max(200).optional(),
   assignedLocationId:z.string().uuid().nullable().optional(),
+  scannerAccess:z.enum(['MATERIALS','OFFICE','BOTH']).optional(),
 });
 
 export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:string}>}){
   try{
     const actor=await requireAuth(request,['ADMIN']);
     await ensureScannerLocationSchema();
+    await ensureScannerAccessSchema();
     const {id}=await params;
     const p=schema.safeParse(await request.json());
     if(!p.success)return fail('Invalid user update',400,p.error.flatten());
@@ -28,6 +31,7 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     const nextRole=p.data.role??current.role;
     const requestedLocation=p.data.assignedLocationId===undefined?current.assigned_location_id:p.data.assignedLocationId;
     const assignedLocationId=nextRole==='SCANNER'?(requestedLocation??null):null;
+    const scannerAccess=nextRole==='SCANNER'?(p.data.scannerAccess??current.scanner_access??'MATERIALS'):'MATERIALS';
     if(assignedLocationId){
       const location=(await sql`select id from ims_locations where id=${assignedLocationId} and active=true limit 1`)[0];
       if(!location)return fail('Assigned location not found or inactive',404);
@@ -36,9 +40,9 @@ export async function PATCH(request:NextRequest,{params}:{params:Promise<{id:str
     const rows=await sql`
       update ims_users set
         full_name=${p.data.fullName??current.full_name},role=${nextRole},active=${p.data.active??current.active},
-        assigned_location_id=${assignedLocationId},password_hash=${passwordHash},updated_at=now()
+        assigned_location_id=${assignedLocationId},scanner_access=${scannerAccess},password_hash=${passwordHash},updated_at=now()
       where id=${id}
-      returning id,username,full_name,role,active,assigned_location_id,last_login_at,updated_at
+      returning id,username,full_name,role,active,assigned_location_id,scanner_access,last_login_at,updated_at
     `;
     return ok(rows[0])
   }catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}
@@ -48,9 +52,10 @@ export async function DELETE(request:NextRequest,{params}:{params:Promise<{id:st
   try{
     const actor=await requireAuth(request,['ADMIN']);
     await ensureScannerLocationSchema();
+    await ensureScannerAccessSchema();
     const {id}=await params;
     if(actor.id===id)return fail('You cannot disable your own account',409);
-    const rows=await db()`update ims_users set active=false,updated_at=now() where id=${id} returning id,username,full_name,role,active,assigned_location_id`;
+    const rows=await db()`update ims_users set active=false,updated_at=now() where id=${id} returning id,username,full_name,role,active,assigned_location_id,scanner_access`;
     return rows[0]?ok(rows[0]):fail('User not found',404)
   }catch(error){const auth=authFailure(error);return auth?fail(auth.message,auth.status):serverError(error)}
 }
