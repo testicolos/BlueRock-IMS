@@ -9,7 +9,7 @@ const conditionSchema = z.preprocess(value => typeof value === 'string' ? value.
   z.enum(['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE']));
 
 const schema = z.object({
-  sessionId: z.string().uuid(),
+  sessionId: z.string().uuid().optional(),
   barcode: z.string().trim().min(3).max(100),
   condition: conditionSchema.default('GOOD'),
 });
@@ -24,38 +24,55 @@ export async function POST(request: NextRequest) {
     const barcode = data.barcode.toUpperCase();
     const sql = db();
     const result = await sql.begin(async tx => {
-      const session = (await tx`select id from ims_office_validation_sessions where id=${data.sessionId} and status='OPEN' limit 1 for update`)[0];
-      if (!session) throw new Error('SESSION_NOT_FOUND');
+      let activeSessionId: string | null = null;
+      if (data.sessionId) {
+        const session = (await tx`
+          select id from ims_office_validation_sessions
+          where id=${data.sessionId} and status='OPEN' limit 1 for update
+        `)[0];
+        activeSessionId = session?.id || null;
+      }
+
       const item = (await tx`
         select i.*,l.name as location_name from ims_office_inventory_items i
         left join ims_locations l on l.id=i.current_location_id
         where i.barcode=${barcode} and i.archived=false limit 1 for update of i
       `)[0];
       if (!item) throw new Error('ITEM_NOT_FOUND');
-      const target = (await tx`
-        select * from ims_office_validation_targets
-        where session_id=${data.sessionId} and inventory_item_id=${item.id}
-        limit 1 for update
-      `)[0];
-      if (!target) throw new Error('NOT_IN_REQUEST');
+
+      let target = null;
+      if (activeSessionId) {
+        target = (await tx`
+          select * from ims_office_validation_targets
+          where session_id=${activeSessionId} and inventory_item_id=${item.id}
+          limit 1 for update
+        `)[0] || null;
+      }
+
+      const countedSessionId = target ? activeSessionId : null;
       const [scan] = await tx`
         insert into ims_office_validation_scans(session_id,inventory_item_id,barcode,scanner_user_id,condition)
-        values(${data.sessionId},${item.id},${item.barcode},${actor.id},${data.condition})
+        values(${countedSessionId},${item.id},${item.barcode},${actor.id},${data.condition})
         returning id,scanned_at
       `;
-      if (!target.validated_at) {
+
+      if (countedSessionId && target && !target.validated_at) {
         await tx`
           update ims_office_validation_targets set validated_at=${scan.scanned_at},validated_by=${actor.id}
-          where session_id=${data.sessionId} and inventory_item_id=${item.id}
+          where session_id=${countedSessionId} and inventory_item_id=${item.id}
         `;
       }
+
       await tx`
         update ims_office_inventory_items set condition=${data.condition},last_validated_at=${scan.scanned_at},
           last_validated_by=${actor.id},updated_at=${scan.scanned_at}
         where id=${item.id}
       `;
+
       return {
-        duplicate: Boolean(target.validated_at),
+        duplicate: Boolean(target?.validated_at),
+        requestActive: Boolean(activeSessionId),
+        requestCounted: Boolean(target),
         item: {
           id: item.id, barcode: item.barcode, name: item.name, category: item.category,
           manufacturer: item.manufacturer, model: item.model, serialNumber: item.serial_number,
@@ -68,9 +85,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const auth = authFailure(error);
     if (auth) return fail(auth.message, auth.status);
-    if (error instanceof Error && error.message === 'SESSION_NOT_FOUND') return fail('This Office Inventory validation request is no longer active.', 409);
     if (error instanceof Error && error.message === 'ITEM_NOT_FOUND') return fail('Barcode not found in Office Inventory', 404);
-    if (error instanceof Error && error.message === 'NOT_IN_REQUEST') return fail('This item is not part of the active Office Inventory validation request', 409);
     return serverError(error);
   }
 }
