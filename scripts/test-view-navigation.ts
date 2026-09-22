@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { allowedViews, resolveView, viewUrl, type View } from '../src/lib/view-navigation';
 
 const origin = 'https://bluerock-ims.vercel.app';
@@ -67,6 +68,15 @@ check('scanner URL normalization preserves unrelated state', () => {
   assert.equal(next.searchParams.get('view'), 'scanner');
   assert.equal(next.searchParams.get('location'), 'warehouse');
   assert.equal(next.hash, '#capture');
+});
+
+check('scanner login exposes Office Inventory scanning', () => {
+  const pageSource = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
+  const officeScanSource = readFileSync(new URL('../src/app/office-scan/page.tsx', import.meta.url), 'utf8');
+  assert.match(pageSource, /scannerOfficeNav[^>]*href="\/office-scan"/);
+  assert.match(pageSource, /Scan Office Inventory/);
+  assert.match(officeScanSource, /Office Inventory Validation/);
+  assert.match(officeScanSource, /Open barcode camera/);
 });
 
 check('sequential navigation and saved history URLs restore the correct pages', () => {
