@@ -92,6 +92,18 @@ check('scanner login exposes Office Inventory scanning on the real scanner route
   assert.match(scannerSetupSource, /Both/);
 });
 
+check('Materials report exposes sortable columns and a location filter', () => {
+  const checklistSource = readFileSync(new URL('../src/app/scan-checklist.tsx', import.meta.url), 'utf8');
+  assert.match(checklistSource, /type SortKey/);
+  assert.match(checklistSource, /aria-sort=/);
+  assert.match(checklistSource, /sortHeader\('Location','LOCATION'\)/);
+  assert.match(checklistSource, /sortHeader\('Recorded scan','SCANNED_AT'\)/);
+  assert.match(checklistSource, /sortHeader\('Photo evidence','PHOTOS'\)/);
+  assert.match(checklistSource, />Location\s*<select/);
+  assert.match(checklistSource, /All locations/);
+  assert.match(checklistSource, /setLocation\('ALL'\)/);
+});
+
 check('sequential navigation and saved history URLs restore the correct pages', () => {
   const pages: View[] = ['materials', 'scanner', 'checklist', 'samples-report', 'scans', 'dashboard'];
   const history: URL[] = [];
