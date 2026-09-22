@@ -27,9 +27,10 @@ export async function GET(request: NextRequest) {
     await requireAuth(request);
     await ensureOfficeInventorySchema();
     const sessions = await sessionRows();
+    const summaryOnly = request.nextUrl.searchParams.get('summary') === '1';
     const sessionId = request.nextUrl.searchParams.get('sessionId') || sessions.find((row: any) => row.status === 'OPEN')?.id;
     let targets: any[] = [];
-    if (sessionId) {
+    if (!summaryOnly && sessionId) {
       targets = await db()`
         select t.session_id,t.validated_at,t.validated_by,i.id,i.barcode,i.name,i.category,i.manufacturer,i.model,
           i.serial_number,i.owner_name,i.condition,i.status,l.name as location_name,u.full_name as validated_by_name
