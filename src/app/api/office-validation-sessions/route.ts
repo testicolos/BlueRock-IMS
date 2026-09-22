@@ -4,6 +4,7 @@ import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureOfficeInventorySchema } from '@/lib/office-inventory-schema';
+import { requireScannerAccess } from '@/lib/scanner-access';
 
 export const maxDuration = 15;
 
@@ -26,7 +27,8 @@ async function sessionRows(sql = db()) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAuth(request);
+    const actor = await requireAuth(request);
+    await requireScannerAccess(actor,'OFFICE');
     await ensureOfficeInventorySchema();
     const summaryOnly = request.nextUrl.searchParams.get('summary') === '1';
     const requestedSessionId = request.nextUrl.searchParams.get('sessionId');
@@ -53,7 +55,10 @@ export async function GET(request: NextRequest) {
     return ok(result);
   } catch (error) {
     const auth = authFailure(error);
-    return auth ? fail(auth.message, auth.status) : serverError(error);
+    if (auth) return fail(auth.message, auth.status);
+    if (error instanceof Error && error.message === 'SCAN_ACCESS_DENIED') return fail('This scanner is not allowed to scan Office Inventory.',403);
+    if (error instanceof Error && error.message === 'SCANNER_ACCOUNT_NOT_FOUND') return fail('Scanner account not found or inactive',403);
+    return serverError(error);
   }
 }
 

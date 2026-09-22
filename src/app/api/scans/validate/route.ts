@@ -5,6 +5,7 @@ import { authFailure, requireAuth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureInventorySchema } from '@/lib/inventory-schema';
+import { requireScannerAccess } from '@/lib/scanner-access';
 
 const schema = z.object({
   barcode: z.string().trim().min(3).max(100),
@@ -19,6 +20,7 @@ const schema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const actor = await requireAuth(request);
+    await requireScannerAccess(actor,'MATERIALS');
     await ensureInventorySchema();
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) return fail('Invalid barcode scan attempt', 400, parsed.error.flatten());
@@ -73,6 +75,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const auth = authFailure(error);
-    return auth ? fail(auth.message, auth.status) : serverError(error);
+    if (auth) return fail(auth.message, auth.status);
+    if (error instanceof Error && error.message === 'SCAN_ACCESS_DENIED') return fail('This scanner is not allowed to scan Materials / Samples.',403);
+    if (error instanceof Error && error.message === 'SCANNER_ACCOUNT_NOT_FOUND') return fail('Scanner account not found or inactive',403);
+    return serverError(error);
   }
 }

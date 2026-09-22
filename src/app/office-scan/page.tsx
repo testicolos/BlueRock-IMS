@@ -11,7 +11,7 @@ const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENA
 
 export default function OfficeScanPage(){
   const videoRef=useRef<HTMLVideoElement>(null);const controlsRef=useRef<IScannerControls|null>(null);const streamRef=useRef<MediaStream|null>(null);
-  const[session,setSession]=useState<Session|null>(null);const[item,setItem]=useState<Item|null>(null);const[manual,setManual]=useState('');const[condition,setCondition]=useState('GOOD');const[busy,setBusy]=useState(false);const[scanning,setScanning]=useState(false);const[error,setError]=useState('');const[message,setMessage]=useState('');
+  const[session,setSession]=useState<Session|null>(null);const[officeAllowed,setOfficeAllowed]=useState<boolean|null>(null);const[item,setItem]=useState<Item|null>(null);const[manual,setManual]=useState('');const[condition,setCondition]=useState('GOOD');const[busy,setBusy]=useState(false);const[scanning,setScanning]=useState(false);const[error,setError]=useState('');const[message,setMessage]=useState('');
   const token=()=>localStorage.getItem('br_token')||'';
   async function request<T>(url:string,options:RequestInit={}){
     const response=await fetch(url,{...options,headers:{'Content-Type':'application/json',Authorization:'Bearer '+token(),...(options.headers||{})}});
@@ -19,7 +19,7 @@ export default function OfficeScanPage(){
   }
   async function load(){
     if(!token()){window.location.href='/';return}
-    try{const data=await request<SessionResponse>('/api/office-validation-sessions?summary=1',{cache:'no-store'});setSession(data.sessions.find(row=>row.status==='OPEN')||null)}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load validation request')}
+    try{const access=await request<{office:boolean}>('/api/scanner-access',{cache:'no-store'});if(!access.office){setOfficeAllowed(false);setSession(null);setError('Office Inventory scanning is not enabled for this scanner account.');return}setOfficeAllowed(true);const data=await request<SessionResponse>('/api/office-validation-sessions?summary=1',{cache:'no-store'});setSession(data.sessions.find(row=>row.status==='OPEN')||null)}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load Office Inventory scanner')}
   }
   useEffect(()=>{void load();const timer=window.setInterval(()=>void load(),10_000);return()=>{window.clearInterval(timer);stopCamera()}},[]);
   function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false)}
@@ -55,6 +55,7 @@ export default function OfficeScanPage(){
   const card:React.CSSProperties={background:'#fff',border:'1px solid #dedbd1',borderRadius:18,padding:18,boxShadow:'0 8px 24px rgba(0,0,0,.05)'};
   const input:React.CSSProperties={width:'100%',boxSizing:'border-box',padding:'12px',border:'1px solid #cbc7bd',borderRadius:10,background:'#fff',fontSize:16};
   const button:React.CSSProperties={padding:'13px 16px',border:0,borderRadius:11,fontWeight:800,fontSize:15,cursor:'pointer'};
+  if(officeAllowed===false)return <main style={shell}><div style={{maxWidth:760,margin:'0 auto'}}><section style={{...card,textAlign:'center',padding:32}}><h1>Office Inventory access not enabled</h1><p>This scanner account is configured for Materials / Samples only. Ask an administrator to change Scan access to Office Inventory or Both.</p><a href="/scan" style={{...button,display:'inline-block',background:'#ff8a46',color:'#252725',textDecoration:'none'}}>Back to scanner</a></section></div></main>;
   return <main style={shell}><div style={{maxWidth:980,margin:'0 auto'}}>
     <header style={{display:'flex',justifyContent:'space-between',gap:14,alignItems:'center',marginBottom:18}}><div><small style={{fontWeight:800,letterSpacing:1}}>BLUE ROCK IMS / OFFICE INVENTORY</small><h1 style={{fontSize:34,margin:'6px 0'}}>Office Inventory Scanner</h1><p style={{margin:0,color:'#666'}}>Scan office assets at any time. If an admin validation request is active, the scan also counts toward that request. Owner is view-only and no transfer can be created.</p></div><a href="/" style={{...button,background:'#e8e4da',color:'#252725',textDecoration:'none',display:'inline-flex',gap:8,alignItems:'center'}}><ArrowLeft size={18}/> Back</a></header>
     {session?<section style={{...card,marginBottom:16,borderColor:'#e8ad78'}}><strong>Validation request active</strong><p style={{margin:'6px 0 0'}}>Progress: {session.validated} of {session.total} assets validated. Your scans will automatically count toward this request.</p></section>:<section style={{...card,marginBottom:16}}><strong>Scan anytime</strong><p style={{margin:'6px 0 0'}}>No validation request is active. Scans are still recorded and update the item's Last scanned status.</p></section>}

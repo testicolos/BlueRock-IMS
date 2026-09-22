@@ -315,7 +315,7 @@ function Scanner({locations,sessions,api,refresh,notify,scannerUser}:{locations:
   const validationAbortRef=useRef<AbortController|null>(null);
   const busyRef=useRef(false);
   const transactionRef=useRef<string|null>(null);
-  const[form,setForm]=useState({locationId:locations[0]?.id||'',condition:'GOOD',notes:'',reportIssue:false,issueType:'Damaged equipment'});
+  const[form,setForm]=useState({locationId:locations[0]?.id||'',notes:'',reportIssue:false,issueType:'Damaged equipment'});
   const[barcode,setBarcode]=useState('');
   const[manualBarcode,setManualBarcode]=useState('');
   const[match,setMatch]=useState<ScanMatch|null>(null);
@@ -452,7 +452,7 @@ function Scanner({locations,sessions,api,refresh,notify,scannerUser}:{locations:
     busyRef.current=true;setBusy(true);setSubmitting(true);setError('');
     try{
       const result=await api<{replaced?:boolean;duplicate?:boolean;issue?:{id:string;status:string;issue_type:string}|null}>('/api/scans',{method:'POST',body:JSON.stringify({
-        barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
+        barcode:match.barcode,locationId:form.locationId,notes:form.notes,
         reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,issueImageUrl:defectEvidence||undefined,
         validationAttemptId:attemptId,captureMethod:method,sessionId:selectedSession?.id,clientTransactionId:transactionRef.current,...geo,
       })});
@@ -487,10 +487,9 @@ function Scanner({locations,sessions,api,refresh,notify,scannerUser}:{locations:
         </div>
 
         <label>New location<select required value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}><option value="" disabled>Select location</option>{locations.map(location=><option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-        <label>Condition<select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label>
         <label>Notes<textarea placeholder="Optional movement or condition notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
 
-        <label className="check defectCheck"><input type="checkbox" checked={form.reportIssue} onChange={e=>{const checked=e.target.checked;setForm(current=>({...current,reportIssue:checked,condition:checked&&current.condition==='GOOD'?'DAMAGED':current.condition}));if(!checked)setDefectEvidence('')}}/> Report this unit as defective</label>
+        <label className="check defectCheck"><input type="checkbox" checked={form.reportIssue} onChange={e=>{const checked=e.target.checked;setForm(current=>({...current,reportIssue:checked}));if(!checked)setDefectEvidence('')}}/> Report this unit as defective</label>
         {form.reportIssue&&<section className="defectCapturePanel"><div className="defectCaptureHeading"><AlertTriangle size={22}/><div><strong>Defect photo required</strong><small>The defect is not reported until you attach a photo and submit the scan.</small></div></div><label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="upload uploadProminent defectEvidence"><span className="uploadIcon"><Camera/></span><span><b>{defectEvidence?'Retake / replace defect photo':'Take / attach defect photo'}</b><small>Photograph the damaged area clearly. The photo is stamped with barcode, time and GPS.</small></span><span className="uploadBrowse">{defectEvidence?'Replace photo':'Open camera'}</span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={defectPhoto}/></label>{defectEvidence?<><img className="uploadPreview" src={defectEvidence} alt="Defect evidence"/><div className="defectPhotoReady"><CheckCircle2 size={16}/> Defect photo attached — submitting this scan will create a Defect Log record.</div></>:<div className="defectPhotoMissing">A defect photo is required before the report can be created.</div>}</section>}
 
         {error&&<div className="error scanError" role="alert">{error}</div>}

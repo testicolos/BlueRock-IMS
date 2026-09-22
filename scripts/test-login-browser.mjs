@@ -68,16 +68,21 @@ try {
   await page.waitForURL('**/scanner-config');
   await page.getByText('QA Scanner', { exact: true }).waitFor();
   await page.getByLabel('Assigned location').selectOption(site.id);
-  await page.getByText('Scanner location saved.', { exact: true }).waitFor();
-  assert.equal((await sql`select assigned_location_id from ims_users where id=${scanner.id}`)[0].assigned_location_id, site.id);
+  await page.getByText('Scanner setup saved.', { exact: true }).waitFor();
+  await page.getByLabel('Scan access').selectOption('BOTH');
+  await page.getByText('Scanner setup saved.', { exact: true }).waitFor();
+  const scannerSetup = (await sql`select assigned_location_id,scanner_access from ims_users where id=${scanner.id}`)[0];
+  assert.equal(scannerSetup.assigned_location_id, site.id);
+  assert.equal(scannerSetup.scanner_access, 'BOTH');
   await page.getByRole('link', { name: 'Back to Admin' }).click();
   await page.getByTitle('Sign out', { exact: true }).click();
   await page.waitForURL('**/login');
   assert.equal(await page.evaluate(() => localStorage.getItem('br_token')), null);
-  console.log('PASS browser: Scanner Setup assignment and legacy admin logout');
+  console.log('PASS browser: Scanner Setup location/access assignment and legacy admin logout');
 
   await signIn('qa-scanner');
   await page.waitForURL('**/scan');
+  await page.getByText('Scan Office Inventory', { exact: true }).waitFor();
   await page.getByRole('link', { name: 'My Site', exact: true }).click();
   await page.waitForURL('**/site');
   await page.getByRole('heading', { name: 'QA Site', exact: true }).waitFor();

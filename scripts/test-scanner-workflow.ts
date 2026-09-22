@@ -35,6 +35,7 @@ async function main() {
     const users = await import('../src/app/api/users/route');
     const user = await import('../src/app/api/users/[id]/route');
     const site = await import('../src/app/api/scanner-site/route');
+    const scannerAccess = await import('../src/app/api/scanner-access/route');
     const transfers = await import('../src/app/api/location-transfers/[id]/route');
 
     const request = (method: string, body: unknown, token: string, path: string) => new NextRequest(`https://test.invalid/api/${path}`, {
@@ -46,13 +47,26 @@ async function main() {
     assert.equal((await users.GET(request('GET', undefined, scannerToken, 'users'))).status, 403);
     const adminUsers = await users.GET(request('GET', undefined, adminToken, 'users'));
     assert.equal(adminUsers.status, 200);
-    assert.ok((await adminUsers.json()).data.some((row: { id: string }) => row.id === scanner.id));
-    console.log('PASS: Scanner Setup user list is admin-only and loads scanners');
+    const adminUserRows = (await adminUsers.json()).data;
+    const scannerRow = adminUserRows.find((row: { id: string }) => row.id === scanner.id);
+    assert.ok(scannerRow);
+    assert.equal(scannerRow.scanner_access,'MATERIALS');
+    const defaultAccess = await scannerAccess.GET(request('GET',undefined,scannerToken,'scanner-access'));
+    assert.deepEqual((await defaultAccess.json()).data,{scanAccess:'MATERIALS',materials:true,office:false});
+    console.log('PASS: existing scanners default to Materials / Samples access');
 
-    const assigned = await user.PATCH(request('PATCH', { assignedLocationId: destination.id }, adminToken, `users/${scanner.id}`), { params: Promise.resolve({ id: scanner.id }) });
-    assert.equal(assigned.status, 200);
-    assert.equal((await assigned.json()).data.assigned_location_id, destination.id);
-    console.log('PASS: administrator can bind a scanner to an active location');
+    const officeOnly = await user.PATCH(request('PATCH', { assignedLocationId: destination.id, scannerAccess:'OFFICE' }, adminToken, `users/${scanner.id}`), { params: Promise.resolve({ id: scanner.id }) });
+    assert.equal(officeOnly.status, 200);
+    const officeOnlyData = (await officeOnly.json()).data;
+    assert.equal(officeOnlyData.assigned_location_id, destination.id);
+    assert.equal(officeOnlyData.scanner_access,'OFFICE');
+    assert.deepEqual((await (await scannerAccess.GET(request('GET',undefined,scannerToken,'scanner-access'))).json()).data,{scanAccess:'OFFICE',materials:false,office:true});
+
+    const both = await user.PATCH(request('PATCH', { scannerAccess:'BOTH' }, adminToken, `users/${scanner.id}`), { params: Promise.resolve({ id: scanner.id }) });
+    assert.equal(both.status, 200);
+    assert.equal((await both.json()).data.scanner_access,'BOTH');
+    assert.deepEqual((await (await scannerAccess.GET(request('GET',undefined,scannerToken,'scanner-access'))).json()).data,{scanAccess:'BOTH',materials:true,office:true});
+    console.log('PASS: administrator can assign Office-only or Both scanner access and bind a scanner to a location');
 
     const initialSite = await site.GET(request('GET', undefined, scannerToken, 'scanner-site'));
     assert.equal(initialSite.status, 200);
@@ -85,9 +99,9 @@ async function main() {
     assert.ok(finalSiteData.materials.some((row: { id: string }) => row.id === item.id));
     console.log('PASS: only the destination scanner can approve and approval moves the item onto My Site');
 
-    const markers = await sql`select version from ims_schema_migrations where version='2026-09-17-scanner-location-transfers-v1'`;
-    assert.equal(markers.length, 1);
-    console.log('PASS: scanner schema migration is recorded and does not need repeated DDL');
+    const markers = await sql`select version from ims_schema_migrations where version in ('2026-09-17-scanner-location-transfers-v1','2026-09-23-scanner-access-v1') order by version`;
+    assert.equal(markers.length, 2);
+    console.log('PASS: scanner location and access migrations are recorded and do not need repeated DDL');
   } finally {
     await sql.end();
     await control`drop schema if exists ${control(schemaName)} cascade`;
