@@ -33,6 +33,7 @@ async function main() {
     const checklist = await import('../src/app/api/scans/checklist/route');
     const officeInventory = await import('../src/app/api/office-inventory/route');
     const officeSessions = await import('../src/app/api/office-validation-sessions/route');
+    const officeValidate = await import('../src/app/api/office-validation/validate/route');
     const officeScan = await import('../src/app/api/office-validation/scan/route');
     const request = (method: string, body: unknown, token = adminToken, path = 'scan-sessions') => new NextRequest(`https://test.invalid/api/${path}`, {
       method, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -116,6 +117,32 @@ async function main() {
     const officeItem = (await officeCreate.json()).data[0];
     assert.match(officeItem.barcode, /^OI-LAP-/);
 
+    const adHocLookup = await officeValidate.POST(request('POST', {
+      barcode: officeItem.barcode,
+    }, scannerToken, 'office-validation/validate'));
+    assert.equal(adHocLookup.status, 200);
+    assert.equal((await adHocLookup.json()).data.requestActive, false);
+
+    const adHocScan = await officeScan.POST(request('POST', {
+      barcode: officeItem.barcode, condition: 'Good',
+    }, scannerToken, 'office-validation/scan'));
+    assert.equal(adHocScan.status, 201);
+    const adHocBody = await adHocScan.json();
+    assert.equal(adHocBody.data.requestActive, false);
+    assert.equal(adHocBody.data.item.condition, 'GOOD');
+    const [adHocStored] = await sql`
+      select last_validated_at,last_validated_by from ims_office_inventory_items where id=${officeItem.id}
+    `;
+    assert.ok(adHocStored.last_validated_at);
+    assert.equal(adHocStored.last_validated_by, scanner.id);
+    const [adHocHistory] = await sql`
+      select session_id,scanner_user_id from ims_office_validation_scans
+      where inventory_item_id=${officeItem.id} order by scanned_at asc limit 1
+    `;
+    assert.equal(adHocHistory.session_id, null);
+    assert.equal(adHocHistory.scanner_user_id, scanner.id);
+    console.log('PASS: Office Inventory items can be scanned without an active validation request');
+
     const officeStarted = await officeSessions.POST(request('POST', {}, adminToken, 'office-validation-sessions'));
     assert.equal(officeStarted.status, 201);
     const officeSession = (await officeStarted.json()).data.session;
@@ -134,7 +161,7 @@ async function main() {
     `;
     assert.ok(officeTarget.validated_at);
     assert.equal(officeTarget.validated_by, scanner.id);
-    console.log('PASS: Office Inventory validation submit locks only the item row and records scanner validation');
+    console.log('PASS: active Office Inventory requests still count scanner validations after ad-hoc scans');
   } finally {
     await sql.end();
     await control`drop schema if exists ${control(schemaName)} cascade`;
