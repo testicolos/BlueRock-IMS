@@ -451,12 +451,13 @@ function Scanner({locations,sessions,api,refresh,notify,scannerUser}:{locations:
     if(form.reportIssue&&!defectEvidence){setError('Take a clear defect photo before submitting this reported defect');return}
     busyRef.current=true;setBusy(true);setSubmitting(true);setError('');
     try{
-      const result=await api<{replaced?:boolean;duplicate?:boolean}>('/api/scans',{method:'POST',body:JSON.stringify({
+      const result=await api<{replaced?:boolean;duplicate?:boolean;issue?:{id:string;status:string;issue_type:string}|null}>('/api/scans',{method:'POST',body:JSON.stringify({
         barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
         reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,issueImageUrl:defectEvidence||undefined,
         validationAttemptId:attemptId,captureMethod:method,sessionId:selectedSession?.id,clientTransactionId:transactionRef.current,...geo,
       })});
-      notify(result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`);
+      const scanMessage=result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`;
+      notify(result.issue?`${scanMessage} · Defect report created`:scanMessage);
       resetScan();setFailures(0);setForm(current=>({...current,notes:'',reportIssue:false}));
       await refresh();
     }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{busyRef.current=false;setBusy(false);setSubmitting(false)}
@@ -478,15 +479,22 @@ function Scanner({locations,sessions,api,refresh,notify,scannerUser}:{locations:
       </section>
       <form className="scanForm scannerForm" onSubmit={submit}>
         <div className={`matchCard ${match?'matched':''}`}>{match?<><img src={match.imageUrl||'/materials/scaffolding.jpg'} alt=""/><div><span><CheckCircle2 size={15}/> Database match · {method==='MANUAL'?'Manual entry':'Camera scan'}</span><h3>{match.name}</h3><code>{match.barcode}</code><small>{match.locationName||'Unassigned'} · {pretty(match.condition)}</small></div></>:<><Barcode size={28}/><div><strong>No barcode matched yet</strong><small>Scan a registered unit or enter its barcode manually.</small></div></>}</div>
+
+        <div className="scannerEvidenceSection">
+          <div className="scannerEvidenceHeading"><ImagePlus size={18}/><div><strong>Photo evidence</strong><small>Attach a current photo of the scanned unit. This is optional for camera scans and required for manual barcode entry.</small></div></div>
+          {method==='MANUAL'?<div className="manualPhotoRequirement"><strong>{evidence?'Required barcode photo attached':'Barcode photo required before submission'}</strong><UnitPhotoCamera key={attemptId||'unmatched'} disabled={busy||!match} onCapture={capturePhoto}/></div>:<label className="upload uploadProminent scanEvidence"><span className="uploadIcon"><ImagePlus/></span><span><b>{evidence?'Replace attached unit photo':'Take / attach unit photo'}</b><small>Open the camera or photo picker. The image is stamped with capture time and GPS.</small></span><span className="uploadBrowse">{evidence?'Replace photo':'Open camera'}</span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={photo}/></label>}
+          {evidence&&<img className="uploadPreview" src={evidence} alt="Timestamped unit evidence"/>}
+        </div>
+
         <label>New location<select required value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}><option value="" disabled>Select location</option>{locations.map(location=><option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
         <label>Condition<select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label>
         <label>Notes<textarea placeholder="Optional movement or condition notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
-        <label className="check"><input type="checkbox" checked={form.reportIssue} onChange={e=>{const checked=e.target.checked;setForm({...form,reportIssue:checked});if(!checked)setDefectEvidence('')}}/> Report this unit as defective</label>
-        {form.reportIssue&&<><label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="upload defectEvidence"><Camera/><span>{defectEvidence?'Retake defect photo':'Take defect photo (required)'}<small>Photograph the damaged area clearly. The image is stamped with barcode, time and GPS.</small></span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={defectPhoto}/></label>{defectEvidence&&<img className="uploadPreview" src={defectEvidence} alt="Defect evidence"/>}</>}
-        {method==='MANUAL'?<div className="manualPhotoRequirement"><strong>{evidence?'Required barcode photo attached':'Barcode photo required before submission'}</strong><UnitPhotoCamera key={attemptId||'unmatched'} disabled={busy||!match} onCapture={capturePhoto}/></div>:<label className="upload scanEvidence"><ImagePlus/><span>{evidence?'Replace unit photo':'Attach unit photo (optional)'}<small>Match a barcode first. Photo is stamped with capture time and GPS coordinates.</small></span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={photo}/></label>}
-        {evidence&&<img className="uploadPreview" src={evidence} alt="Timestamped unit evidence"/>}
+
+        <label className="check defectCheck"><input type="checkbox" checked={form.reportIssue} onChange={e=>{const checked=e.target.checked;setForm(current=>({...current,reportIssue:checked,condition:checked&&current.condition==='GOOD'?'DAMAGED':current.condition}));if(!checked)setDefectEvidence('')}}/> Report this unit as defective</label>
+        {form.reportIssue&&<section className="defectCapturePanel"><div className="defectCaptureHeading"><AlertTriangle size={22}/><div><strong>Defect photo required</strong><small>The defect is not reported until you attach a photo and submit the scan.</small></div></div><label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="upload uploadProminent defectEvidence"><span className="uploadIcon"><Camera/></span><span><b>{defectEvidence?'Retake / replace defect photo':'Take / attach defect photo'}</b><small>Photograph the damaged area clearly. The photo is stamped with barcode, time and GPS.</small></span><span className="uploadBrowse">{defectEvidence?'Replace photo':'Open camera'}</span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={defectPhoto}/></label>{defectEvidence?<><img className="uploadPreview" src={defectEvidence} alt="Defect evidence"/><div className="defectPhotoReady"><CheckCircle2 size={16}/> Defect photo attached — submitting this scan will create a Defect Log record.</div></>:<div className="defectPhotoMissing">A defect photo is required before the report can be created.</div>}</section>}
+
         {error&&<div className="error scanError" role="alert">{error}</div>}
-        <button className="primary submitScan" disabled={busy||!match||!form.locationId||(method==='MANUAL'&&!evidence)||(form.reportIssue&&!defectEvidence)}><ScanLine size={19}/>{busy?'Working…':'Submit matched scan'}</button>
+        <button className="primary submitScan" disabled={busy||!match||!form.locationId||(method==='MANUAL'&&!evidence)}><ScanLine size={19}/>{busy?'Working…':form.reportIssue?'Submit scan & create defect report':'Submit matched scan'}</button>
       </form>
     </div>
   </section>
