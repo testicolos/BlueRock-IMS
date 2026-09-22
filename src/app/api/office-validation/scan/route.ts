@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
       const item = (await tx`
         select i.*,l.name as location_name from ims_office_inventory_items i
         left join ims_locations l on l.id=i.current_location_id
-        where i.barcode=${barcode} and i.archived=false limit 1 for update
+        where i.barcode=${barcode} and i.archived=false limit 1 for update of i
       `)[0];
       if (!item) throw new Error('ITEM_NOT_FOUND');
       const target = (await tx`
