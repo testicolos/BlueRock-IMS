@@ -12,6 +12,7 @@ import ScanEvidence from './scan-evidence';
 import ScanChecklist from './scan-checklist';
 import UnitPhotoCamera from './unit-photo-camera';
 import OfficeInventory from './office-inventory';
+import { apiRequest } from '@/lib/client-api';
 import { resolveView, viewUrl, type View } from '@/lib/view-navigation';
 
 type User={id:string;username:string;fullName?:string;full_name?:string;role:'ADMIN'|'SCANNER';active?:boolean;last_login_at?:string};
@@ -38,7 +39,7 @@ const statuses=['ACTIVE','INACTIVE','MAINTENANCE','LOST','RETIRED'];
 export default function Home(){
   const[token,setToken]=useState(''); const[me,setMe]=useState<User|null>(null); const[view,setView]=useState<View>('dashboard');
   const[locations,setLocations]=useState<Location[]>([]); const[materials,setMaterials]=useState<Material[]>([]); const[users,setUsers]=useState<User[]>([]);
-  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[scanSessions,setScanSessions]=useState<ScanSession[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false);
+  const[scans,setScans]=useState<Scan[]>([]); const[issues,setIssues]=useState<Issue[]>([]); const[scanSessions,setScanSessions]=useState<ScanSession[]>([]); const[message,setMessage]=useState(''); const[mobileNav,setMobileNav]=useState(false); const[loading,setLoading]=useState(false); const fullDataLoaded=useRef(false);
 
   useEffect(()=>{const savedToken=localStorage.getItem('br_token');const savedUser=localStorage.getItem('br_user');if(savedToken&&savedUser){const user:User=JSON.parse(savedUser);setView(resolveView(window.location.search,user.role));setToken(savedToken);setMe(user)}},[]);
   useEffect(()=>{if('serviceWorker' in navigator)void navigator.serviceWorker.register('/sw.js')},[]);
@@ -59,9 +60,11 @@ export default function Home(){
     if(!me)return;
     const url=viewUrl(window.location.href,next,me.role);
     if(url!==`${window.location.pathname}${window.location.search}${window.location.hash}`)window.history.pushState(null,'',url);
-    setView(resolveView(window.location.search,me.role));setMobileNav(false);
+    const resolved=resolveView(window.location.search,me.role);
+    setView(resolved);setMobileNav(false);
+    if(me.role==='ADMIN'&&resolved!=='office-inventory'&&!fullDataLoaded.current)void loadAll(true);
   }
-  const api:Api=async<T,>(url:string,options:RequestInit={})=>{const res=await fetch(url,{...options,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...(options.headers||{})}});const body:ApiResult<T>=await res.json();if(!body.success)throw new Error(body.error?.message||'Request failed');return body.data};
+  const api:Api=async<T,>(url:string,options:RequestInit={})=>apiRequest<T>(url,{...options,headers:{...(token?{Authorization:`Bearer ${token}`}:{ }),...(options.headers||{})}});
   async function download(url:string){
     const response=await fetch(url,{cache:'no-store',headers:{Authorization:`Bearer ${token}`}});
     const contentType=response.headers.get('Content-Type')||'';
@@ -80,12 +83,15 @@ export default function Home(){
     document.body.appendChild(anchor);
     try{anchor.click()}finally{anchor.remove();window.setTimeout(()=>URL.revokeObjectURL(objectUrl),30_000)}
   }
-  async function loadAll(){
+  async function loadAll(forceFull=false){
     if(!token||!me)return;
     setLoading(true);
     try{
+      if(!forceFull&&me.role==='ADMIN'&&view==='office-inventory'&&!fullDataLoaded.current){
+        const rows=await api<Location[]>('/api/locations');setLocations(rows);return;
+      }
       const data=await api<AppData>('/api/app-data');
-      setLocations(data.locations);setMaterials(data.materials);setUsers(data.users);setScans(data.scans);setIssues(data.issues);setScanSessions(data.scanSessions||[]);
+      setLocations(data.locations);setMaterials(data.materials);setUsers(data.users);setScans(data.scans);setIssues(data.issues);setScanSessions(data.scanSessions||[]);fullDataLoaded.current=true;
     }catch(error){setMessage(error instanceof Error?error.message:'Unable to load data')}finally{setLoading(false)}
   }
   useEffect(()=>{void loadAll()},[token,me?.id]);

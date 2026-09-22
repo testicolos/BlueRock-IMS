@@ -5,12 +5,13 @@ import { fail, ok, serverError } from '@/lib/http';
 import { traceStage, withRequestTrace } from '@/lib/request-trace';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 10;
 export const GET = withRequestTrace('auth.session', async (request: NextRequest) => {
   try {
     const session = await traceStage('token.verify', () => authenticateRequest(request));
     const rows = await traceStage('user.active', () => db().begin(async tx => {
-      await tx`set local lock_timeout = '3s'`;
-      await tx`set local statement_timeout = '6s'`;
+      await tx`set local lock_timeout = '2s'`;
+      await tx`set local statement_timeout = '4s'`;
       return tx`select username,full_name,role,active from ims_users where id=${session.user.id} limit 1`;
     }));
     const user = rows[0];

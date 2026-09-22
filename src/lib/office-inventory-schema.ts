@@ -1,16 +1,48 @@
+import type { Sql, TransactionSql } from 'postgres';
+
 import { db } from '@/lib/db';
 
 let ready: Promise<void> | null = null;
+const officeLock = 78243192;
 
 export function ensureOfficeInventorySchema() {
-  if (!ready) ready = migrateOfficeInventorySchema().catch((error) => { ready = null; throw error; });
+  if (!ready) ready = migrateOfficeInventorySchema(db()).catch((error) => { ready = null; throw error; });
   return ready;
 }
 
-async function migrateOfficeInventorySchema() {
-  const sql = db();
-  await sql.begin(async tx => {
-    await tx`select pg_advisory_xact_lock(hashtext('bluerock-office-inventory-v1'))`;
+async function boundMigrationTransaction(sql: TransactionSql) {
+  await sql`set local lock_timeout = '4s'`;
+  await sql`set local statement_timeout = '30s'`;
+  await sql`set local idle_in_transaction_session_timeout = '45s'`;
+}
+
+async function officeSchemaApplied(database: Sql | TransactionSql) {
+  const [row] = await database`
+    select
+      to_regclass('ims_office_inventory_items') is not null as items,
+      to_regclass('ims_office_owner_history') is not null as owner_history,
+      to_regclass('ims_office_validation_sessions') is not null as sessions,
+      to_regclass('ims_office_validation_targets') is not null as targets,
+      to_regclass('ims_office_validation_scans') is not null as scans
+  `;
+  return Boolean(row?.items && row?.owner_history && row?.sessions && row?.targets && row?.scans);
+}
+
+export async function migrateOfficeInventorySchema(database: Sql) {
+  const applied = await database.begin('read only', async sql => {
+    await boundMigrationTransaction(sql);
+    return officeSchemaApplied(sql);
+  });
+  if (applied) return;
+
+  await database.begin(async tx => {
+    await boundMigrationTransaction(tx);
+    const [lock] = await tx`select pg_try_advisory_xact_lock(${officeLock}) as locked`;
+    if (!lock?.locked) {
+      const error = Object.assign(new Error('Office Inventory schema migration is already running'), { code: '55P03' });
+      throw error;
+    }
+    if (await officeSchemaApplied(tx)) return;
 
     await tx`create table if not exists ims_office_inventory_items (
       id uuid primary key default gen_random_uuid(),

@@ -5,10 +5,12 @@ import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureOfficeInventorySchema } from '@/lib/office-inventory-schema';
 
+export const maxDuration = 15;
+
 const closeSchema = z.object({ id: z.string().uuid(), action: z.literal('close') });
 
-async function sessionRows() {
-  return db()`
+async function sessionRows(sql = db()) {
+  return sql`
     select s.id,s.status,s.started_by,s.started_at,s.closed_by,s.closed_at,
       starter.full_name as started_by_name,closer.full_name as closed_by_name,
       count(t.inventory_item_id)::int as total,
@@ -26,22 +28,29 @@ export async function GET(request: NextRequest) {
   try {
     await requireAuth(request);
     await ensureOfficeInventorySchema();
-    const sessions = await sessionRows();
-    const sessionId = request.nextUrl.searchParams.get('sessionId') || sessions.find((row: any) => row.status === 'OPEN')?.id;
-    let targets: any[] = [];
-    if (sessionId) {
-      targets = await db()`
-        select t.session_id,t.validated_at,t.validated_by,i.id,i.barcode,i.name,i.category,i.manufacturer,i.model,
-          i.serial_number,i.owner_name,i.condition,i.status,l.name as location_name,u.full_name as validated_by_name
-        from ims_office_validation_targets t
-        join ims_office_inventory_items i on i.id=t.inventory_item_id
-        left join ims_locations l on l.id=i.current_location_id
-        left join ims_users u on u.id=t.validated_by
-        where t.session_id=${sessionId}
-        order by case when t.validated_at is null then 0 else 1 end,i.name,i.barcode
-      `;
-    }
-    return ok({ sessions, sessionId: sessionId || null, targets });
+    const summaryOnly = request.nextUrl.searchParams.get('summary') === '1';
+    const requestedSessionId = request.nextUrl.searchParams.get('sessionId');
+    const result = await db().begin('read only', async tx => {
+      await tx`set local lock_timeout = '2s'`;
+      await tx`set local statement_timeout = '8s'`;
+      const sessions = await sessionRows(tx);
+      const sessionId = requestedSessionId || sessions.find((row: any) => row.status === 'OPEN')?.id;
+      let targets: any[] = [];
+      if (!summaryOnly && sessionId) {
+        targets = await tx`
+          select t.session_id,t.validated_at,t.validated_by,i.id,i.barcode,i.name,i.category,i.manufacturer,i.model,
+            i.serial_number,i.owner_name,i.condition,i.status,l.name as location_name,u.full_name as validated_by_name
+          from ims_office_validation_targets t
+          join ims_office_inventory_items i on i.id=t.inventory_item_id
+          left join ims_locations l on l.id=i.current_location_id
+          left join ims_users u on u.id=t.validated_by
+          where t.session_id=${sessionId}
+          order by case when t.validated_at is null then 0 else 1 end,i.name,i.barcode
+        `;
+      }
+      return { sessions, sessionId: sessionId || null, targets };
+    });
+    return ok(result);
   } catch (error) {
     const auth = authFailure(error);
     return auth ? fail(auth.message, auth.status) : serverError(error);

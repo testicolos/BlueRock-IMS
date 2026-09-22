@@ -19,7 +19,7 @@ export default function OfficeScanPage(){
   }
   async function load(){
     if(!token()){window.location.href='/';return}
-    try{const data=await request<SessionResponse>('/api/office-validation-sessions',{cache:'no-store'});setSession(data.sessions.find(row=>row.status==='OPEN')||null)}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load validation request')}
+    try{const data=await request<SessionResponse>('/api/office-validation-sessions?summary=1',{cache:'no-store'});setSession(data.sessions.find(row=>row.status==='OPEN')||null)}catch(reason){setError(reason instanceof Error?reason.message:'Unable to load validation request')}
   }
   useEffect(()=>{void load();return()=>stopCamera()},[]);
   function stopCamera(){controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false)}

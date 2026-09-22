@@ -5,6 +5,8 @@ import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureOfficeInventorySchema, officeBarcode } from '@/lib/office-inventory-schema';
 
+export const maxDuration = 15;
+
 const createSchema = z.object({
   name: z.string().trim().min(2).max(160),
   category: z.string().trim().min(2).max(120),
@@ -22,7 +24,10 @@ export async function GET(request: NextRequest) {
   try {
     await requireAuth(request, ['ADMIN']);
     await ensureOfficeInventorySchema();
-    const rows = await db()`
+    const rows = await db().begin('read only', async tx => {
+      await tx`set local lock_timeout = '2s'`;
+      await tx`set local statement_timeout = '8s'`;
+      return tx`
       select i.*, l.name as location_name,
         case when exists(
           select 1 from ims_office_validation_targets t
@@ -34,6 +39,7 @@ export async function GET(request: NextRequest) {
       where i.archived=false
       order by i.created_at desc
     `;
+    });
     return ok(rows);
   } catch (error) {
     const auth = authFailure(error);
