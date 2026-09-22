@@ -10,11 +10,12 @@ import { ensureScannerLocationSchema } from '@/lib/scanner-location-schema';
 import { scanRecords } from '@/lib/scan-records';
 import { recordScan } from '@/lib/record-scan';
 import { assertScanEvidence } from '@/lib/scan-evidence-policy';
+import { requireScannerAccess } from '@/lib/scanner-access';
 
 const schema = z.object({
   barcode: z.string().trim().min(3).max(100),
   locationId: z.string().uuid().optional(),
-  condition: z.enum(['GOOD', 'MINOR_ISSUE', 'DAMAGED', 'MISSING_PARTS', 'NEEDS_MAINTENANCE']).default('GOOD'),
+  condition: z.enum(['GOOD', 'MINOR_ISSUE', 'DAMAGED', 'MISSING_PARTS', 'NEEDS_MAINTENANCE']).optional(),
   notes: z.string().max(2000).optional(),
   reportIssue: z.boolean().default(false),
   issueType: z.string().max(120).optional(),
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const actor = await requireAuth(request);
+    await requireScannerAccess(actor,'MATERIALS');
     await ensureInventorySchema();
     await ensureScannerLocationSchema();
     const parsed = schema.safeParse(await request.json());
@@ -54,7 +56,9 @@ export async function POST(request: NextRequest) {
       if (oversizedEvidence) return fail('Attached image is too large. Retake the photo closer to the barcode or choose a smaller image.', 413, parsed.error.flatten());
       return fail('Invalid scan', 400, parsed.error.flatten());
     }
-    const data = parsed.data;
+    const data = actor.role==='SCANNER'
+      ? { ...parsed.data, condition: parsed.data.reportIssue ? 'DAMAGED' as const : undefined }
+      : parsed.data;
     if (data.reportIssue && !data.issueImageUrl) return fail('Take a defect photo before submitting a reported defect.', 400);
     assertScanEvidence(data);
 
@@ -65,6 +69,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const auth = authFailure(error);
     if (auth) return fail(auth.message, auth.status);
+    if (error instanceof Error && error.message === 'SCAN_ACCESS_DENIED') return fail('This scanner is not allowed to scan Materials / Samples.',403);
+    if (error instanceof Error && error.message === 'SCANNER_ACCOUNT_NOT_FOUND') return fail('Scanner account not found or inactive',403);
     if (error instanceof Error && error.message === 'MANUAL_PHOTO_REQUIRED') return fail('Take a new photo showing the material and its barcode before submitting manual entry', 400);
     if (error instanceof Error && error.message === 'TRANSACTION_CONFLICT') return fail('Scan request identifier is already in use', 409);
     if (error instanceof Error && error.message === 'INVALID_VALIDATION') return fail('Scan validation expired or does not match', 409);
