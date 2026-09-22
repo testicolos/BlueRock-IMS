@@ -23,7 +23,8 @@
 .exportNote { grid-column: 1 / -1; margin: 0; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
 .exportError { grid-column: 1 / -1; padding: 13px; border: 1px solid #edc0ae; border-radius: 8px; background: #fff0e8; color: #973a24; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
 .exportProgress { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr) minmax(170px, 1fr); gap: 13px; padding: 17px; margin-bottom: 18px; border: 1px solid #3c3e3c; border-radius: 12px; background: #252726; }
+.filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr) minmax(170px, 1fr); gap: 13px;
+.sampleFilters { grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr); } padding: 17px; margin-bottom: 18px; border: 1px solid #3c3e3c; border-radius: 12px; background: #252726; }
 .filters label { min-width: 0; color: #ece6dc; font-size: 11px; }
 .filters input, .filters select { min-width: 0; max-width: 100%; min-height: 44px; font-size: 16px; color: var(--ink); background: #fffaf1; }
 .search > span { display: flex; align-items: center; min-width: 0; gap: 8px; background: #fffaf1; border: 1px solid #d5ccbd; border-radius: 8px; padding-left: 12px; color: #776e61; }
