@@ -14,7 +14,6 @@ export async function GET(request: NextRequest) {
     const period = request.nextUrl.searchParams.get('period');
     const isCurrent = !period || period === 'current';
     const session = isCurrent && inventoryType !== 'ALL' ? await activeScanSession(inventoryType) : null;
-    if (isCurrent && inventoryType !== 'ALL' && !session) return fail('An administrator must start a scan session before opening this checklist.', 409);
     const response = ok(await scanChecklist(period, undefined, inventoryType, session?.id ?? null));
     response.headers.set('Cache-Control', 'private, no-store');
     return response;
