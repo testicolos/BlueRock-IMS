@@ -110,7 +110,8 @@ export default function Home(){
       {message&&<button className="notice" onClick={()=>setMessage('')}>{message}</button>}
       {loading?<DataLoading/>:<>
         {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans} scanSessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
-        {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}\n        {view==='office-inventory'&&isAdmin&&<OfficeInventory locations={locations} api={api} notify={notify}/>}
+        {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='office-inventory'&&isAdmin&&<OfficeInventory locations={locations} api={api} notify={notify}/>}
         {view==='locations'&&isAdmin&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='scanner'&&<Scanner locations={locations} sessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
         {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
