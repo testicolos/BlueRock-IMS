@@ -12,24 +12,24 @@ export async function GET(request: NextRequest) {
     const sessionId = request.nextUrl.searchParams.get('sessionId');
     if (!sessionId) return fail('Validation request is required', 400);
     const sql = db();
-    const session = (await sql\`
+    const session = (await sql`
       select s.id,s.status,s.started_at,s.closed_at,starter.full_name as started_by_name,closer.full_name as closed_by_name
       from ims_office_validation_sessions s
       left join ims_users starter on starter.id=s.started_by
       left join ims_users closer on closer.id=s.closed_by
-      where s.id=\${sessionId} limit 1
-    \`)[0];
+      where s.id=${sessionId} limit 1
+    `)[0];
     if (!session) return fail('Validation request not found', 404);
-    const rows = await sql\`
+    const rows = await sql`
       select i.barcode,i.name,i.category,i.manufacturer,i.model,i.serial_number,i.owner_name,
         l.name as location_name,i.condition,i.status,t.validated_at,u.full_name as validated_by_name
       from ims_office_validation_targets t
       join ims_office_inventory_items i on i.id=t.inventory_item_id
       left join ims_locations l on l.id=i.current_location_id
       left join ims_users u on u.id=t.validated_by
-      where t.session_id=\${sessionId}
+      where t.session_id=${sessionId}
       order by i.name,i.barcode
-    \`;
+    `;
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Office Inventory Validation');
     sheet.addRow(['BlueRock IMS - Office Inventory Validation']);
