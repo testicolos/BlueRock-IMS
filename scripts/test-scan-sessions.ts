@@ -64,8 +64,10 @@ async function main() {
       validationAttemptId: attempt.attemptId, captureMethod: 'CAMERA', sessionId: first.session.id,
       latitude: 25.1, longitude: 51.2, capturedAt: now,
     }, scannerToken, 'scans'))).status, 409);
-    assert.equal((await checklist.GET(request('GET', undefined, adminToken, 'scans/checklist?inventoryType=TOOL'))).status, 409);
-    console.log('PASS: closing a session removes scanner access and prevents scans or a new current checklist');
+    const closedChecklist = await checklist.GET(request('GET', undefined, adminToken, 'scans/checklist?inventoryType=TOOL'));
+    assert.equal(closedChecklist.status, 200);
+    assert.equal((await closedChecklist.json()).data.scanSessionId, null);
+    console.log('PASS: closing a session removes scanner access and prevents scans while reports remain viewable');
 
     const sample = await sessions.POST(request('POST', { inventoryType: 'SAMPLE' }));
     assert.equal(sample.status, 201);
