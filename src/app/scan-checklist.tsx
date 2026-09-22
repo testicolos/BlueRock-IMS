@@ -239,7 +239,7 @@ export default function ScanChecklist({ api, download, inventoryType }: { api: A
       {exporting && <span className={styles.exportProgress} role="status">Preparing your {exporting} Excel report. The download will begin when it is ready.</span>}
     </section>
 
-    <div className={styles.filters}>
+    <div className={`${styles.filters} ${isSample ? styles.sampleFilters : ''} `}>
       <label className={styles.search}>{isSample ? 'Find a sample, customer or employee' : 'Find a barcode or material'}
         <span><Search size={17} aria-hidden="true" /><input type="search" placeholder={isSample ? 'Barcode, sample, customer, employee…' : 'Barcode, material, location…'} value={query} onChange={event => setQuery(event.target.value)} /></span>
       </label>
