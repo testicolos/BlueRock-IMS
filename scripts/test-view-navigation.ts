@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { allowedViews, resolveView, viewUrl, type View } from '../src/lib/view-navigation';
 
 const origin = 'https://bluerock-ims.vercel.app';
-const expectedViews: View[] = ['dashboard', 'materials', 'locations', 'scanner', 'issues', 'users', 'scans', 'checklist', 'samples-report'];
+const expectedViews: View[] = ['dashboard', 'materials', 'office-inventory', 'locations', 'scanner', 'issues', 'users', 'scans', 'checklist', 'samples-report'];
 let checks = 0;
 
 function check(name: string, run: () => void) {

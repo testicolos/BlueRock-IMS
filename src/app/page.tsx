@@ -11,6 +11,7 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import ScanEvidence from './scan-evidence';
 import ScanChecklist from './scan-checklist';
 import UnitPhotoCamera from './unit-photo-camera';
+import OfficeInventory from './office-inventory';
 import { resolveView, viewUrl, type View } from '@/lib/view-navigation';
 
 type User={id:string;username:string;fullName?:string;full_name?:string;role:'ADMIN'|'SCANNER';active?:boolean;last_login_at?:string};
@@ -28,7 +29,7 @@ type ScanSession={id:string;inventory_type:'TOOL'|'SAMPLE';status:'OPEN'|'CLOSED
 type AppData={locations:Location[];materials:Material[];users:User[];scans:Scan[];issues:Issue[];scanSessions:ScanSession[]};
 
 const adminNav:[View,string,typeof CircleGauge][]=[
-  ['dashboard','Overview',CircleGauge],['materials','Materials & Units',Boxes],['locations','Locations',MapPin],
+  ['dashboard','Overview',CircleGauge],['materials','Materials & Units',Boxes],['office-inventory','Office Inventory',Archive],['locations','Locations',MapPin],
   ['scanner','Scan Unit',ScanLine],['checklist','Materials Report',PackageCheck],['samples-report','Samples Report',Boxes],['issues','Defects',AlertTriangle],['users','Users',UsersRound],['scans','Scan History',History],
 ];
 const conditions=['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE'];
@@ -109,7 +110,7 @@ export default function Home(){
       {message&&<button className="notice" onClick={()=>setMessage('')}>{message}</button>}
       {loading?<DataLoading/>:<>
         {view==='dashboard'&&isAdmin&&<Dashboard materials={materials} issues={openIssues} locations={locations} scans={scans} scanSessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
-        {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}
+        {view==='materials'&&isAdmin&&<Materials materials={materials} locations={locations} api={api} refresh={loadAll} notify={notify}/>}\n        {view==='office-inventory'&&isAdmin&&<OfficeInventory locations={locations} api={api} notify={notify}/>}
         {view==='locations'&&isAdmin&&<Locations rows={locations} units={units} api={api} refresh={loadAll} notify={notify}/>}
         {view==='scanner'&&<Scanner locations={locations} sessions={scanSessions} api={api} refresh={loadAll} notify={notify}/>}
         {view==='issues'&&me.role==='ADMIN'&&<Issues rows={issues} units={units} api={api} refresh={loadAll} notify={notify}/>}
@@ -431,9 +432,9 @@ function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];s
     }catch(reason){setError(reason instanceof Error?reason.message:'Scan failed')}finally{busyRef.current=false;setBusy(false);setSubmitting(false)}
   }
 
-  if(!selectedSession) return <section className="scannerPage"><div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scanning is paused until an administrator starts a session.</p></div><div className="scannerHeroActions"><button type="button" className="secondary scannerRefresh" onClick={()=>void refresh()}><RefreshCw size={18}/> Refresh page</button></div></div><section className="scanLocked"><PlayCircle size={44}/><h3>No active scan session</h3><p>Ask an administrator to click <strong>Scan equipments</strong> or <strong>Scan samples</strong> from the Overview page. The matching checklist will then be available here.</p></section></section>;
+  if(!selectedSession) return <section className="scannerPage"><div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scanning is paused until an administrator starts a session.</p></div><div className="scannerHeroActions"><a className="secondary scannerRefresh" href="/office-scan"><Barcode size={18}/> Office Inventory</a><button type="button" className="secondary scannerRefresh" onClick={()=>void refresh()}><RefreshCw size={18}/> Refresh page</button></div></div><section className="scanLocked"><PlayCircle size={44}/><h3>No active scan session</h3><p>Ask an administrator to click <strong>Scan equipments</strong> or <strong>Scan samples</strong> from the Overview page. The matching checklist will then be available here.</p></section></section>;
   return <section className="scannerPage">
-    <div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scan with the camera or enter a barcode manually. Every barcode is checked against inventory.</p></div><div className="scannerHeroActions"><button type="button" className="secondary scannerRefresh" onClick={refreshScanner} disabled={submitting}><RefreshCw size={18}/> Refresh page</button><div className={`gpsBadge ${geo?'ready':''}`}><LocateFixed size={18}/><span>{geo?`${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)}`:'GPS captured with every scan'}</span></div></div></div>
+    <div className="scannerHero"><div><span className="eyebrow">MOBILE BARCODE CONTROL</span><h2>Scan a unit</h2><p>Scan with the camera or enter a barcode manually. Every barcode is checked against inventory.</p></div><div className="scannerHeroActions"><a className="secondary scannerRefresh" href="/office-scan"><Barcode size={18}/> Office Inventory</a><button type="button" className="secondary scannerRefresh" onClick={refreshScanner} disabled={submitting}><RefreshCw size={18}/> Refresh page</button><div className={`gpsBadge ${geo?'ready':''}`}><LocateFixed size={18}/><span>{geo?`${geo.latitude.toFixed(5)}, ${geo.longitude.toFixed(5)}`:'GPS captured with every scan'}</span></div></div></div>
     <div className="sessionPicker" aria-label="Active scan sessions">{sessions.map(session=><button type="button" key={session.id} className={selectedSession.id===session.id?'primary active':'secondary'} onClick={()=>{setSelectedSessionId(session.id);resetScan()}}>{session.inventory_type==='TOOL'?'Scan equipments':'Scan samples'}</button>)}</div>
     <div className="scannerGrid">
       <section className="cameraCard">
