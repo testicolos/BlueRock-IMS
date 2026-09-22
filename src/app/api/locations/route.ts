@@ -4,13 +4,19 @@ import { requireAuth, authFailure } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 
+export const maxDuration = 10;
+
 const createSchema = z.object({ name: z.string().min(2).max(120), code: z.string().min(1).max(30), description: z.string().max(500).optional(), address: z.string().max(300).optional(), locationType: z.string().max(60).optional() });
 
 export async function GET(request: NextRequest) {
   try {
     await requireAuth(request);
     const sql = db();
-    const rows = await sql`select id,name,code,description,address,location_type,active,created_at,updated_at from ims_locations where active=true order by name`;
+    const rows = await sql.begin('read only', async tx => {
+      await tx`set local lock_timeout = '2s'`;
+      await tx`set local statement_timeout = '5s'`;
+      return tx`select id,name,code,description,address,location_type,active,created_at,updated_at from ims_locations where active=true order by name`;
+    });
     return ok(rows);
   } catch (error) { const auth=authFailure(error); return auth ? fail(auth.message,auth.status) : serverError(error); }
 }
