@@ -35,6 +35,7 @@ type ChecklistResponse = {
   retentionDays: number;
   months: string[];
   nextReportAt: string;
+  scanSessionId: string | null;
   periods: ReportPeriod[];
   rows: ChecklistRow[];
 };
@@ -167,6 +168,7 @@ export default function ScanChecklist({ api, download, inventoryType }: { api: A
       <Clock3 size={21} aria-hidden="true" />
       <div><strong>Each barcode has its own 24-hour scan window.</strong><p>The first scan starts its window. Further scans do not extend it. After 24 hours, that barcode needs a new scan. Daily report history is available for {data?.retentionDays || 30} days, with a report created automatically every 24 hours.</p></div>
     </div>
+    {data?.current && !data.scanSessionId && <div className={styles.sessionNotice} role="status"><strong>No active {isSample ? 'sample' : 'equipment'} scan session.</strong><span>The report remains available, but scanners cannot submit new scans until an administrator starts a session from Overview.</span></div>}
 
     <section className={styles.reportControls} aria-label="Report history and Excel exports">
       <div className={styles.reportChoice}>
