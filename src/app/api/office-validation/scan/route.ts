@@ -5,10 +5,13 @@ import { db } from '@/lib/db';
 import { fail, ok, serverError } from '@/lib/http';
 import { ensureOfficeInventorySchema } from '@/lib/office-inventory-schema';
 
+const conditionSchema = z.preprocess(value => typeof value === 'string' ? value.trim().toUpperCase().replace(/[\s-]+/g, '_') : value,
+  z.enum(['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE']));
+
 const schema = z.object({
   sessionId: z.string().uuid(),
   barcode: z.string().trim().min(3).max(100),
-  condition: z.enum(['GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE']).default('GOOD'),
+  condition: conditionSchema.default('GOOD'),
 });
 
 export async function POST(request: NextRequest) {
