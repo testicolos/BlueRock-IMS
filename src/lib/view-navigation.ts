@@ -1,4 +1,4 @@
-export const allowedViews = ['dashboard','materials','locations','scanner','issues','users','scans','checklist','samples-report'] as const;
+export const allowedViews = ['dashboard','materials','office-inventory','locations','scanner','issues','users','scans','checklist','samples-report'] as const;
 export type View = typeof allowedViews[number];
 type Role = 'ADMIN' | 'SCANNER';
 
