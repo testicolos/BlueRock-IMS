@@ -19,6 +19,7 @@ const schema = z.object({
   reportIssue: z.boolean().default(false),
   issueType: z.string().max(120).optional(),
   evidenceImageUrl: z.string().max(3_500_000).optional(),
+  issueImageUrl: z.string().max(3_500_000).optional(),
   validationAttemptId: z.string().uuid(),
   captureMethod: z.enum(['CAMERA', 'MANUAL']),
   latitude: z.number().min(-90).max(90),
@@ -49,11 +50,12 @@ export async function POST(request: NextRequest) {
     await ensureScannerLocationSchema();
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) {
-      const oversizedEvidence = parsed.error.issues.some(issue => issue.path[0] === 'evidenceImageUrl' && issue.code === 'too_big');
+      const oversizedEvidence = parsed.error.issues.some(issue => ['evidenceImageUrl','issueImageUrl'].includes(String(issue.path[0])) && issue.code === 'too_big');
       if (oversizedEvidence) return fail('Attached image is too large. Retake the photo closer to the barcode or choose a smaller image.', 413, parsed.error.flatten());
       return fail('Invalid scan', 400, parsed.error.flatten());
     }
     const data = parsed.data;
+    if (data.reportIssue && !data.issueImageUrl) return fail('Take a defect photo before submitting a reported defect.', 400);
     assertScanEvidence(data);
 
     const transactionId = data.clientTransactionId ?? randomUUID();

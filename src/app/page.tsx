@@ -294,8 +294,16 @@ function Users({rows,currentId,api,refresh,notify}:{rows:User[];currentId:string
 
 function UserForm({row,api,close,done}:{row:User|null;api:Api;close:()=>void;done:()=>void}){const[form,setForm]=useState({username:row?.username||'',fullName:row?.full_name||'',password:'',role:row?.role||'SCANNER',active:row?.active!==false});const[error,setError]=useState('');async function submit(event:FormEvent){event.preventDefault();try{const body=row?{fullName:form.fullName,role:form.role,active:form.active,...(form.password?{password:form.password}:{})}:form;await api(row?`/api/users/${row.id}`:'/api/users',{method:row?'PATCH':'POST',body:JSON.stringify(body)});done()}catch(reason){setError(reason instanceof Error?reason.message:'Unable to save user')}}return <Modal title={row?'Edit user':'Add user'} subtitle="Passwords are securely hashed." close={close}><form className="formGrid" onSubmit={submit}><label>Full name<input required value={form.fullName} onChange={e=>setForm({...form,fullName:e.target.value})}/></label><label>Username<input required disabled={Boolean(row)} value={form.username} onChange={e=>setForm({...form,username:e.target.value})}/></label><label>Role<select value={form.role} onChange={e=>setForm({...form,role:e.target.value as User['role']})}><option value="SCANNER">Scanner</option><option value="ADMIN">Administrator</option></select></label><label>{row?'New password (optional)':'Password'}<input required={!row} minLength={12} type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/></label>{row&&<label className="check"><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})}/> Account active</label>}{error&&<div className="error full">{error}</div>}<FormActions close={close} label="Save user"/></form></Modal>}
 
-function Issues({rows,units,api,refresh,notify}:{rows:Issue[];units:Unit[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){const[selected,setSelected]=useState<Issue|null>(null);const[open,setOpen]=useState(false);async function resolve(issue:Issue){const note=prompt('Resolution note');if(!note)return;await api('/api/issues',{method:'POST',body:JSON.stringify({action:'resolve',issueId:issue.id,resolutionNote:note})});notify('Defect resolved');await refresh()}async function remove(issue:Issue){if(!confirm('Archive this defect record?'))return;await api(`/api/issues/${issue.id}`,{method:'DELETE'});notify('Defect archived');await refresh()}return <><section className="pageHero"><div><span className="eyebrow">MAINTENANCE EVIDENCE</span><h2>Defect Log</h2><p>Photo-backed issues attached to individual barcode units.</p></div><button className="primary" onClick={()=>{setSelected(null);setOpen(true)}}><Plus size={17}/> Report defect</button></section><section className="defectGrid">{rows.map(issue=><article className="defectCard" key={issue.id}><img src={issue.image_url||issue.material_image_url||'/materials/grinder.jpg'} alt={issue.issue_type}/><div className="defectBody"><div><Status value={issue.status}/><small>{formatDate(issue.reported_at)}</small></div><h3>{issue.issue_type}</h3><code>{issue.barcode}</code><p>{issue.description}</p><small>{issue.location_name||'Unassigned'} · {issue.reported_by_name||'Unknown'}</small></div><div className="defectActions">{issue.status==='OPEN'&&<button className="resolve" onClick={()=>void resolve(issue)}><PackageCheck size={16}/> Resolve</button>}<button onClick={()=>{setSelected(issue);setOpen(true)}}><Edit3 size={16}/></button><button className="dangerButton" onClick={()=>void remove(issue)}><Trash2 size={16}/></button></div></article>)}{rows.length===0&&<Empty text="No defects recorded"/>}</section>{open&&<IssueForm row={selected} units={units} api={api} close={()=>setOpen(false)} done={async()=>{setOpen(false);notify(selected?'Defect updated':'Defect recorded');await refresh()}}/>}</>}
-
+function Issues({rows,units,api,refresh,notify}:{rows:Issue[];units:Unit[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){
+  const[selected,setSelected]=useState<Issue|null>(null);const[open,setOpen]=useState(false);const[liveRows,setLiveRows]=useState<Issue[]>(rows);const[listBusy,setListBusy]=useState(false);const[listError,setListError]=useState('');
+  useEffect(()=>{setLiveRows(rows)},[rows]);
+  async function loadIssues(){setListBusy(true);setListError('');try{setLiveRows(await api<Issue[]>('/api/issues',{cache:'no-store'}))}catch(reason){setListError(reason instanceof Error?reason.message:'Unable to load reported defects')}finally{setListBusy(false)}}
+  useEffect(()=>{void loadIssues();const timer=window.setInterval(()=>void loadIssues(),30_000);return()=>window.clearInterval(timer)},[]);
+  async function sync(){await Promise.all([loadIssues(),refresh()])}
+  async function resolve(issue:Issue){const note=prompt('Resolution note');if(!note)return;await api('/api/issues',{method:'POST',body:JSON.stringify({action:'resolve',issueId:issue.id,resolutionNote:note})});notify('Defect resolved');await sync()}
+  async function remove(issue:Issue){if(!confirm('Archive this defect record?'))return;await api(`/api/issues/${issue.id}`,{method:'DELETE'});notify('Defect archived');await sync()}
+  return <><section className="pageHero"><div><span className="eyebrow">MAINTENANCE EVIDENCE</span><h2>Defect Log</h2><p>Photo-backed issues attached to individual barcode units.</p></div><div className="officeHeroActions"><button className="secondary" type="button" disabled={listBusy} onClick={()=>void loadIssues()}><RefreshCw size={17}/>{listBusy?'Refreshing…':`Refresh · ${liveRows.length}`}</button><button className="primary" onClick={()=>{setSelected(null);setOpen(true)}}><Plus size={17}/> Report defect</button></div></section>{listError&&<div className="error" role="alert">{listError}</div>}<section className="defectGrid">{liveRows.map(issue=><article className="defectCard" key={issue.id}><img src={issue.image_url||issue.material_image_url||'/materials/grinder.jpg'} alt={issue.issue_type}/><div className="defectBody"><div><Status value={issue.status}/><small>{formatDate(issue.reported_at)}</small></div><h3>{issue.issue_type}</h3><code>{issue.barcode}</code><p>{issue.description}</p><small>{issue.location_name||'Unassigned'} · {issue.reported_by_name||'Unknown'}</small></div><div className="defectActions">{issue.status==='OPEN'&&<button className="resolve" onClick={()=>void resolve(issue)}><PackageCheck size={16}/> Resolve</button>}<button onClick={()=>{setSelected(issue);setOpen(true)}}><Edit3 size={16}/></button><button className="dangerButton" onClick={()=>void remove(issue)}><Trash2 size={16}/></button></div></article>)}{!listBusy&&liveRows.length===0&&<Empty text="No defects recorded"/>}</section>{open&&<IssueForm row={selected} units={units} api={api} close={()=>setOpen(false)} done={async()=>{setOpen(false);notify(selected?'Defect updated':'Defect recorded');await sync()}}/>}</>
+}
 function IssueForm({row,units,api,close,done}:{row:Issue|null;units:Unit[];api:Api;close:()=>void;done:()=>void}){const[form,setForm]=useState({inventoryItemId:row?.inventory_item_id||units[0]?.id||'',issueType:row?.issue_type||'Damaged equipment',description:row?.description||'',imageUrl:row?.image_url||''});const[error,setError]=useState('');async function file(event:React.ChangeEvent<HTMLInputElement>){const selected=event.target.files?.[0];if(!selected)return;if(selected.size>2_500_000){setError('Image must be smaller than 2.5 MB');return}setForm({...form,imageUrl:await fileData(selected)})}async function submit(event:FormEvent){event.preventDefault();try{await api(row?`/api/issues/${row.id}`:'/api/issues',{method:row?'PATCH':'POST',body:JSON.stringify(row?{issueType:form.issueType,description:form.description,imageUrl:form.imageUrl}:{action:'create',...form})});done()}catch(reason){setError(reason instanceof Error?reason.message:'Unable to save defect')}}return <Modal title={row?'Edit defect':'Report defect'} subtitle="Attach clear photo evidence when available." close={close}><form className="formGrid" onSubmit={submit}>{!row&&<label className="full">Barcode unit<select value={form.inventoryItemId} onChange={e=>setForm({...form,inventoryItemId:e.target.value})}>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.barcode} · {unit.name} · {unit.location_name}</option>)}</select></label>}<label className="full">Issue type<input required value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="full">Description<textarea required value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label><label className="upload full"><ImagePlus/><span>{form.imageUrl?'Replace defect photo':'Upload defect photo'}<small>JPG, PNG or WEBP · maximum 2.5 MB</small></span><input type="file" accept="image/*" onChange={file}/></label>{form.imageUrl&&<img className="uploadPreview full" src={form.imageUrl} alt="Defect preview"/>}{error&&<div className="error full">{error}</div>}<FormActions close={close} label="Save defect"/></form></Modal>}
 
 function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];sessions:ScanSession[];api:Api;refresh:()=>Promise<void>;notify:(s:string)=>void}){
@@ -315,6 +323,7 @@ function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];s
   const[method,setMethod]=useState<'CAMERA'|'MANUAL'>('CAMERA');
   const[geo,setGeo]=useState<GeoStamp|null>(null);
   const[evidence,setEvidence]=useState('');
+  const[defectEvidence,setDefectEvidence]=useState('');
   const[failures,setFailures]=useState(0);
   const[scanning,setScanning]=useState(false);
   const[cameraOpening,setCameraOpening]=useState(false);
@@ -334,12 +343,12 @@ function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];s
   useEffect(()=>()=>{cameraSessionRef.current++;scanRevisionRef.current++;validationAbortRef.current?.abort();controlsRef.current?.stop();streamRef.current?.getTracks().forEach(track=>track.stop())},[]);
 
   function stopCamera(){cameraSessionRef.current++;controlsRef.current?.stop();controlsRef.current=null;streamRef.current?.getTracks().forEach(track=>track.stop());streamRef.current=null;if(videoRef.current)videoRef.current.srcObject=null;setScanning(false);setCameraOpening(false)}
-  function clearMatch(){scanRevisionRef.current++;validationAbortRef.current?.abort();transactionRef.current=null;setMatch(null);setAttemptId('');setGeo(null);setEvidence('')}
+  function clearMatch(){scanRevisionRef.current++;validationAbortRef.current?.abort();transactionRef.current=null;setMatch(null);setAttemptId('');setGeo(null);setEvidence('');setDefectEvidence('')}
   function resetScan(){stopCamera();clearMatch();setBarcode('');setManualBarcode('');setMethod('CAMERA');setError('')}
   function editManualBarcode(value:string){stopCamera();clearMatch();setMethod('MANUAL');setBarcode('');setManualBarcode(value.toUpperCase());setError('')}
   function refreshScanner(){
     if(submitting)return;
-    if((manualBarcode||match||evidence||form.notes||form.reportIssue)&&!window.confirm('Refresh Scan Unit? Unsaved barcode details, photos and notes will be cleared. Submitted scans are not affected.'))return;
+    if((manualBarcode||match||evidence||defectEvidence||form.notes||form.reportIssue)&&!window.confirm('Refresh Scan Unit? Unsaved barcode details, photos and notes will be cleared. Submitted scans are not affected.'))return;
     stopCamera();validationAbortRef.current?.abort();window.location.reload();
   }
 
@@ -420,17 +429,31 @@ function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];s
     if(!selected)return;
     try{await capturePhoto(selected)}catch(reason){setError(reason instanceof Error?reason.message:'Could not attach photo')}
   }
+  async function defectPhoto(event:React.ChangeEvent<HTMLInputElement>){
+    const selected=event.target.files?.[0];event.target.value='';
+    if(!selected||!match)return;
+    if(selected.size>8_000_000){setError('Defect photo must be smaller than 8 MB before processing');return}
+    const revision=scanRevisionRef.current;const capturedAt=new Date(selected.lastModified||Date.now()).toISOString();
+    busyRef.current=true;setBusy(true);setError('');setDefectEvidence('');
+    try{
+      const stamp={...geoFromPosition(await currentPosition()),capturedAt};
+      const image=await stampedImage(selected,stamp,match.barcode);
+      if(revision!==scanRevisionRef.current)throw new Error('Barcode changed. Please take the defect photo again.');
+      setDefectEvidence(image);
+    }catch(reason){setError(locationError(reason))}finally{if(revision===scanRevisionRef.current){busyRef.current=false;setBusy(false)}}
+  }
 
   async function submit(event:FormEvent){
     event.preventDefault();
     if(busyRef.current)return;
     if(!match||!attemptId||!geo){setError('Scan and match a barcode before submitting');return}
     if(method==='MANUAL'&&!evidence){setError('Take a clear photo showing the barcode before submitting manual entry');return}
+    if(form.reportIssue&&!defectEvidence){setError('Take a clear defect photo before submitting this reported defect');return}
     busyRef.current=true;setBusy(true);setSubmitting(true);setError('');
     try{
       const result=await api<{replaced?:boolean;duplicate?:boolean}>('/api/scans',{method:'POST',body:JSON.stringify({
         barcode:match.barcode,locationId:form.locationId,condition:form.condition,notes:form.notes,
-        reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,
+        reportIssue:form.reportIssue,issueType:form.issueType,evidenceImageUrl:evidence||undefined,issueImageUrl:defectEvidence||undefined,
         validationAttemptId:attemptId,captureMethod:method,sessionId:selectedSession?.id,clientTransactionId:transactionRef.current,...geo,
       })});
       notify(result.duplicate?`${match.barcode} was already saved`:result.replaced?`${match.barcode}: latest scan replaced the entry in its current 24-hour window`:`${match.barcode} scanned successfully — new 24-hour window`);
@@ -455,12 +478,12 @@ function Scanner({locations,sessions,api,refresh,notify}:{locations:Location[];s
         <label>New location<select required value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}><option value="" disabled>Select location</option>{locations.map(location=><option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
         <label>Condition<select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{conditions.map(value=><option key={value}>{pretty(value)}</option>)}</select></label>
         <label>Notes<textarea placeholder="Optional movement or condition notes" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></label>
-        <label className="check"><input type="checkbox" checked={form.reportIssue} onChange={e=>setForm({...form,reportIssue:e.target.checked})}/> Report this unit as defective</label>
-        {form.reportIssue&&<label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label>}
+        <label className="check"><input type="checkbox" checked={form.reportIssue} onChange={e=>{const checked=e.target.checked;setForm({...form,reportIssue:checked});if(!checked)setDefectEvidence('')}}/> Report this unit as defective</label>
+        {form.reportIssue&&<><label>Issue type<input value={form.issueType} onChange={e=>setForm({...form,issueType:e.target.value})}/></label><label className="upload defectEvidence"><Camera/><span>{defectEvidence?'Retake defect photo':'Take defect photo (required)'}<small>Photograph the damaged area clearly. The image is stamped with barcode, time and GPS.</small></span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={defectPhoto}/></label>{defectEvidence&&<img className="uploadPreview" src={defectEvidence} alt="Defect evidence"/>}</>}
         {method==='MANUAL'?<div className="manualPhotoRequirement"><strong>{evidence?'Required barcode photo attached':'Barcode photo required before submission'}</strong><UnitPhotoCamera key={attemptId||'unmatched'} disabled={busy||!match} onCapture={capturePhoto}/></div>:<label className="upload scanEvidence"><ImagePlus/><span>{evidence?'Replace unit photo':'Attach unit photo (optional)'}<small>Match a barcode first. Photo is stamped with capture time and GPS coordinates.</small></span><input type="file" accept="image/*" capture="environment" disabled={busy||!match} onChange={photo}/></label>}
         {evidence&&<img className="uploadPreview" src={evidence} alt="Timestamped unit evidence"/>}
         {error&&<div className="error scanError" role="alert">{error}</div>}
-        <button className="primary submitScan" disabled={busy||!match||!form.locationId||(method==='MANUAL'&&!evidence)}><ScanLine size={19}/>{busy?'Working…':'Submit matched scan'}</button>
+        <button className="primary submitScan" disabled={busy||!match||!form.locationId||(method==='MANUAL'&&!evidence)||(form.reportIssue&&!defectEvidence)}><ScanLine size={19}/>{busy?'Working…':'Submit matched scan'}</button>
       </form>
     </div>
   </section>

@@ -9,6 +9,7 @@ export type RecordScanInput = {
   reportIssue: boolean;
   issueType?: string;
   evidenceImageUrl?: string;
+  issueImageUrl?: string;
   validationAttemptId: string;
   captureMethod: 'CAMERA' | 'MANUAL';
   latitude: number;
@@ -120,7 +121,7 @@ export async function recordScan(
     await tx`
       insert into ims_issues(inventory_item_id,scan_id,reported_by,issue_type,description,image_url)
       values(${item.id},${scans[0].id},${scannerId},${data.issueType ?? 'GENERAL'},
-        ${data.notes ?? 'Issue reported during scan'},${data.evidenceImageUrl ?? null})
+        ${data.notes ?? 'Issue reported during scan'},${data.issueImageUrl ?? null})
     `;
   }
   return {
