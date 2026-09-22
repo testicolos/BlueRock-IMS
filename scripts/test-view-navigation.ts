@@ -79,7 +79,7 @@ check('scanner login exposes Office Inventory scanning on the real scanner route
   assert.match(scannerSource, /Scan Office Inventory/);
   assert.match(scannerSource, /Defect photo required/);
   assert.match(scannerSource, /issueImageUrl/);
-  assert.match(officeScanSource, /Office Inventory Validation/);
+  assert.match(officeScanSource, /Office Inventory Scanner/);
   assert.match(officeScanSource, /Open barcode camera/);
 });
 
