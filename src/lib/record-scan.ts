@@ -4,7 +4,7 @@ import { assertScanEvidence } from './scan-evidence-policy';
 export type RecordScanInput = {
   barcode: string;
   locationId?: string;
-  condition: 'GOOD' | 'MINOR_ISSUE' | 'DAMAGED' | 'MISSING_PARTS' | 'NEEDS_MAINTENANCE';
+  condition?: 'GOOD' | 'MINOR_ISSUE' | 'DAMAGED' | 'MISSING_PARTS' | 'NEEDS_MAINTENANCE';
   notes?: string;
   reportIssue: boolean;
   issueType?: string;
@@ -67,6 +67,7 @@ export async function recordScan(
     if (destination.id === item.current_location_id) destination = null;
   }
 
+  const nextCondition = data.condition ?? (data.reportIssue ? 'DAMAGED' : item.condition);
   const scannedAt = testClock ? await testClock() : (await tx`
     select greatest(clock_timestamp(), coalesce(
       (select max(scanned_at) + interval '1 microsecond' from ims_scans where inventory_item_id=${item.id}),
@@ -92,14 +93,14 @@ export async function recordScan(
       latitude,longitude,location_accuracy,captured_at,evidence_image_url,scan_window_id,scanned_at
     ) values(
       ${item.id},${item.barcode},${item.current_location_id},${null},${scannerId},
-      ${data.condition},${data.notes ?? null},${transactionId},${attempt.id},${data.captureMethod},${data.sessionId ?? null},
+      ${nextCondition},${data.notes ?? null},${transactionId},${attempt.id},${data.captureMethod},${data.sessionId ?? null},
       ${data.latitude},${data.longitude},${data.locationAccuracy ?? null},${data.capturedAt},${data.evidenceImageUrl ?? null},${window.id},${scannedAt}
     ) returning id,barcode,scanned_at,scan_window_id
   `;
 
   await tx`
     update ims_inventory_items
-    set condition=${data.condition},last_scanned_at=${scannedAt},last_scanned_by=${scannerId},updated_at=${scannedAt}
+    set condition=${nextCondition},last_scanned_at=${scannedAt},last_scanned_by=${scannerId},updated_at=${scannedAt}
     where id=${item.id}
   `;
 
