@@ -31,6 +31,9 @@ async function main() {
     const scans = await import('../src/app/api/scans/route');
     const issues = await import('../src/app/api/issues/route');
     const checklist = await import('../src/app/api/scans/checklist/route');
+    const officeInventory = await import('../src/app/api/office-inventory/route');
+    const officeSessions = await import('../src/app/api/office-validation-sessions/route');
+    const officeScan = await import('../src/app/api/office-validation/scan/route');
     const request = (method: string, body: unknown, token = adminToken, path = 'scan-sessions') => new NextRequest(`https://test.invalid/api/${path}`, {
       method, headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -103,6 +106,34 @@ async function main() {
     const sampleSessions = await sessions.GET(request('GET', undefined, scannerToken));
     assert.equal((await sampleSessions.json()).data.length, 1);
     console.log('PASS: equipment and sample sessions are independent and selectable');
+
+    const officeCreate = await officeInventory.POST(request('POST', {
+      name: 'Session laptop', category: 'Laptop', manufacturer: 'Test', model: 'Office',
+      serialNumber: 'OFFICE-SESSION-1', ownerName: 'Session User', locationId: location.id,
+      condition: 'GOOD', status: 'ACTIVE', quantity: 1,
+    }, adminToken, 'office-inventory'));
+    assert.equal(officeCreate.status, 201);
+    const officeItem = (await officeCreate.json()).data[0];
+    assert.match(officeItem.barcode, /^OI-LAP-/);
+
+    const officeStarted = await officeSessions.POST(request('POST', {}, adminToken, 'office-validation-sessions'));
+    assert.equal(officeStarted.status, 201);
+    const officeSession = (await officeStarted.json()).data.session;
+
+    const officeSaved = await officeScan.POST(request('POST', {
+      sessionId: officeSession.id, barcode: officeItem.barcode, condition: 'GOOD',
+    }, scannerToken, 'office-validation/scan'));
+    assert.equal(officeSaved.status, 201);
+    const officeSavedBody = await officeSaved.json();
+    assert.equal(officeSavedBody.data.item.id, officeItem.id);
+    assert.equal(officeSavedBody.data.duplicate, false);
+    const [officeTarget] = await sql`
+      select validated_at,validated_by from ims_office_validation_targets
+      where session_id=${officeSession.id} and inventory_item_id=${officeItem.id}
+    `;
+    assert.ok(officeTarget.validated_at);
+    assert.equal(officeTarget.validated_by, scanner.id);
+    console.log('PASS: Office Inventory validation submit locks only the item row and records scanner validation');
   } finally {
     await sql.end();
     await control`drop schema if exists ${control(schemaName)} cascade`;
