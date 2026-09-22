@@ -117,12 +117,14 @@ export async function recordScan(
     `)[0];
   }
 
+  let issue = null;
   if (data.reportIssue) {
-    await tx`
+    issue = (await tx`
       insert into ims_issues(inventory_item_id,scan_id,reported_by,issue_type,description,image_url)
       values(${item.id},${scans[0].id},${scannerId},${data.issueType ?? 'GENERAL'},
         ${data.notes ?? 'Issue reported during scan'},${data.issueImageUrl ?? null})
-    `;
+      returning id,status,issue_type,reported_at
+    `)[0];
   }
   return {
     duplicate: false as const,
@@ -134,5 +136,6 @@ export async function recordScan(
     previousLocationId: item.current_location_id,
     currentLocationId: item.current_location_id,
     transfer: transfer && destination ? { ...transfer, destination: { id: destination.id, name: destination.name } } : null,
+    issue,
   };
 }
