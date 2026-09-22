@@ -23,9 +23,16 @@ async function officeSchemaApplied(database: Sql | TransactionSql) {
       to_regclass('ims_office_owner_history') is not null as owner_history,
       to_regclass('ims_office_validation_sessions') is not null as sessions,
       to_regclass('ims_office_validation_targets') is not null as targets,
-      to_regclass('ims_office_validation_scans') is not null as scans
+      to_regclass('ims_office_validation_scans') is not null as scans,
+      coalesce((
+        select is_nullable='YES'
+        from information_schema.columns
+        where table_schema=current_schema()
+          and table_name='ims_office_validation_scans'
+          and column_name='session_id'
+      ),false) as scan_session_nullable
   `;
-  return Boolean(row?.items && row?.owner_history && row?.sessions && row?.targets && row?.scans);
+  return Boolean(row?.items && row?.owner_history && row?.sessions && row?.targets && row?.scans && row?.scan_session_nullable);
 }
 
 export async function migrateOfficeInventorySchema(database: Sql) {
@@ -93,13 +100,15 @@ export async function migrateOfficeInventorySchema(database: Sql) {
 
     await tx`create table if not exists ims_office_validation_scans (
       id uuid primary key default gen_random_uuid(),
-      session_id uuid not null references ims_office_validation_sessions(id),
+      session_id uuid references ims_office_validation_sessions(id),
       inventory_item_id uuid not null references ims_office_inventory_items(id),
       barcode varchar(100) not null,
       scanner_user_id uuid not null references ims_users(id),
       condition varchar(30) not null check (condition in ('GOOD','MINOR_ISSUE','DAMAGED','MISSING_PARTS','NEEDS_MAINTENANCE')),
       scanned_at timestamptz not null default now()
     )`;
+
+    await tx`alter table ims_office_validation_scans alter column session_id drop not null`;
 
     await tx`create unique index if not exists idx_office_validation_one_open
       on ims_office_validation_sessions((1)) where status='OPEN'`;
