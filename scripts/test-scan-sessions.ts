@@ -55,6 +55,24 @@ async function main() {
     assert.equal(attempt.matched, true);
     assert.equal((await checklist.GET(request('GET', undefined, adminToken, 'scans/checklist?inventoryType=TOOL'))).status, 200);
 
+    const defectBase = {
+      barcode: tool.barcode, locationId: location.id, condition: 'DAMAGED', reportIssue: true,
+      issueType: 'Cracked housing', notes: 'Visible crack reported during scan',
+      validationAttemptId: attempt.attemptId, captureMethod: 'CAMERA' as const, sessionId: first.session.id,
+      latitude: 25.1, longitude: 51.2, capturedAt: now,
+    };
+    const missingDefectPhoto = await scans.POST(request('POST', defectBase, scannerToken, 'scans'));
+    assert.equal(missingDefectPhoto.status, 400);
+    const issueImageUrl = 'data:image/jpeg;base64,AA==';
+    const savedDefect = await scans.POST(request('POST', { ...defectBase, issueImageUrl }, scannerToken, 'scans'));
+    assert.equal(savedDefect.status, 201);
+    const [reportedIssue] = await sql`select issue_type,description,image_url,reported_by from ims_issues where inventory_item_id=${tool.id} order by reported_at desc limit 1`;
+    assert.equal(reportedIssue.issue_type, 'Cracked housing');
+    assert.equal(reportedIssue.description, 'Visible crack reported during scan');
+    assert.equal(reportedIssue.image_url, issueImageUrl);
+    assert.equal(reportedIssue.reported_by, scanner.id);
+    console.log('PASS: scan defect reports require and persist their own defect photo');
+
     const closed = await sessions.PATCH(request('PATCH', { id: first.session.id, action: 'close' }));
     assert.equal(closed.status, 200);
     const noSessions = await sessions.GET(request('GET', undefined, scannerToken));
