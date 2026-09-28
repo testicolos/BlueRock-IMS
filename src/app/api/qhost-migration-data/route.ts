@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import postgres from "postgres";
 
-async function query(text: string, params: unknown[] = []) {
+async function query(text: string, params: any[] = []) {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("Database is not configured");
   const client = postgres(url, { max: 1, prepare: false });
